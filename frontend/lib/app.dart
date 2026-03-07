@@ -1,4 +1,3 @@
-app.dart
 /*
  * chAs AI Creator - App Root Widget
  * Created by: chAs
