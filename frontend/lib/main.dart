@@ -1,4 +1,3 @@
-main.dart
 /*
  * chAs AI Creator - Main Application Entry
  * Created by: chAs
