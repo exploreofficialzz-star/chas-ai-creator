@@ -27,7 +27,7 @@ dependencies:
   smooth_page_indicator: ^1.1.0
   introduction_screen: ^3.1.14
   flutter_slidable: ^3.0.1
-  flutter_pull_to_refresh: ^2.0.0  # Updated package name
+  pull_to_refresh: ^2.0.0
   
   # State Management
   flutter_bloc: ^8.1.3
@@ -44,10 +44,8 @@ dependencies:
   connectivity_plus: ^5.0.2
   
   # Authentication - Custom JWT (Nigeria Friendly, No Firebase)
-  # Removed: firebase_auth, firebase_core
-  # Using custom JWT authentication instead
-  google_sign_in: ^6.1.6  # Optional for Google login
-  sign_in_with_apple: ^5.0.0  # Optional for Apple login
+  google_sign_in: ^6.1.6
+  sign_in_with_apple: ^5.0.0
   
   # Storage
   shared_preferences: ^2.2.2
@@ -73,13 +71,10 @@ dependencies:
   package_info_plus: ^5.0.1
   device_info_plus: ^9.1.1
   
-  # Ads - Unity Ads (Nigeria Friendly, replaces Google AdMob)
-  # Unity Ads works in Nigeria unlike Google AdMob
+  # Ads - Unity Ads (Nigeria Friendly)
   unity_ads_plugin: ^0.3.8
   
   # Payments - Paystack (Nigeria Payment Gateway)
-  # Removed: flutter_stripe, purchases_flutter
-  # Using Paystack Flutter SDK
   flutter_paystack: ^1.0.7
   
   # Notifications - Local only (No Firebase)
@@ -101,10 +96,10 @@ dev_dependencies:
   mockito: ^5.4.4
   hive_generator: ^2.0.1
 
-# Fix dependency conflicts
+# Fix ALL dependency conflicts
 dependency_overrides:
-  intl: ^0.17.0  # Required for flutter_paystack compatibility
-  http: ^0.13.6  # Ensure compatibility with older packages
+  intl: ^0.17.0
+  meta: ^1.9.1
 
 flutter:
   uses-material-design: true
@@ -113,10 +108,3 @@ flutter:
     - assets/images/
     - assets/icons/
     - assets/animations/
-  
-  # Removed fonts section - using Google Fonts instead for smaller APK size
-  # If you want custom fonts, uncomment and add the font files
-  # fonts:
-  #   - family: Inter
-  #     fonts:
-  #       - asset: assets/fonts/Inter-Regular.ttf
