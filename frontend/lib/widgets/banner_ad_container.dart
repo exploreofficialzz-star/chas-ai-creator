@@ -5,7 +5,7 @@ Created by: chAs
 
 import 'package:flutter/material.dart';
 import 'package:unity_ads_plugin/unity_ads_plugin.dart';
-import '../services/ad_service.dart';
+import '../config/theme.dart';
 
 class BannerAdContainer extends StatefulWidget {
   final bool isLarge;
@@ -34,7 +34,7 @@ class _BannerAdContainerState extends State<BannerAdContainer> {
       height: widget.isLarge ? 250 : 100,
       alignment: Alignment.center,
       child: UnityBannerAd(
-        placementId: AdService().bannerAdUnitId,
+        placementId: AppConfig.unityBannerPlacementId,
         onLoad: (placementId) {
           setState(() {
             _isLoaded = true;
