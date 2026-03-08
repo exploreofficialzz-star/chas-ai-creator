@@ -22,6 +22,12 @@ jobs:
           flutter-version: '3.19.0'
           channel: 'stable'
       
+      - name: Fix Android Project
+        run: |
+          flutter clean
+          rm -rf android
+          flutter create --platforms=android .
+      
       - name: Install dependencies
         run: flutter pub get
       
