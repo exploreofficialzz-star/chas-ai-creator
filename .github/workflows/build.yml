@@ -25,14 +25,12 @@ jobs:
       - name: Clean Flutter
         run: flutter clean
       
-      # FIX: Create Android project with V2 embedding explicitly
       - name: Recreate Android Project with V2 Embedding
         run: |
           rm -rf android
           flutter config --enable-android
           flutter create --platforms=android .
       
-      # FIX: Update AndroidManifest.xml for V2 embedding
       - name: Fix AndroidManifest for V2 Embedding
         run: |
           cat > android/app/src/main/AndroidManifest.xml << 'EOF'
@@ -49,10 +47,6 @@ jobs:
                       android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
                       android:hardwareAccelerated="true"
                       android:windowSoftInputMode="adjustResize">
-                      <!-- Specifies an Android theme to apply to this Activity as soon as
-                           the Android process has started. This theme is visible to the user
-                           while the Flutter UI initializes. After that, this theme continues
-                           to determine the Window background behind the Flutter UI. -->
                       <meta-data
                         android:name="io.flutter.embedding.android.NormalTheme"
                         android:resource="@style/NormalTheme"
@@ -62,17 +56,10 @@ jobs:
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
                   </activity>
-                  <!-- Don't delete the meta-data below.
-                       This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
                   <meta-data
                       android:name="flutterEmbedding"
                       android:value="2" />
               </application>
-              <!-- Required to query activities that can process text, see:
-                   https://developer.android.com/training/package-visibility?hl=en and
-                   https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
-                   
-                   In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
               <queries>
                   <intent>
                       <action android:name="android.intent.action.PROCESS_TEXT"/>
@@ -82,7 +69,6 @@ jobs:
           </manifest>
           EOF
       
-      # FIX: Update MainActivity.kt for V2 embedding
       - name: Fix MainActivity for V2 Embedding
         run: |
           mkdir -p android/app/src/main/kotlin/com/chas/aicreator
@@ -95,7 +81,6 @@ jobs:
           }
           EOF
       
-      # FIX: Update app build.gradle with SDK 34 and proper config
       - name: Update Android Config
         run: |
           cat > android/app/build.gradle << 'EOF'
@@ -163,20 +148,20 @@ jobs:
           }
 
           dependencies {
-              implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.0"
+              implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.22"
           }
           EOF
           
-          # FIX: Root build.gradle with compatible AGP
+          # FIX: Updated Kotlin version to 1.9.22
           cat > android/build.gradle << 'EOF'
           buildscript {
-              ext.kotlin_version = '1.9.0'
+              ext.kotlin_version = '1.9.22'
               repositories {
                   google()
                   mavenCentral()
               }
               dependencies {
-                  classpath 'com.android.tools.build:gradle:7.4.2'
+                  classpath 'com.android.tools.build:gradle:8.2.1'
                   classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
               }
           }
@@ -201,13 +186,13 @@ jobs:
           }
           EOF
           
-          # FIX: Gradle wrapper properties
+          # FIX: Updated Gradle to 8.5 for AGP 8.2.1
           cat > android/gradle/wrapper/gradle-wrapper.properties << 'EOF'
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-7.6.3-all.zip
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.5-all.zip
           EOF
       
       - name: Install dependencies
