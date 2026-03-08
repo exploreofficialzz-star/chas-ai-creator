@@ -267,3 +267,7 @@ class PaystackService:
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
         unique_id = str(uuid.uuid4())[:8]
         return f"{prefix}_{timestamp}_{unique_id}"
+
+
+# FIXED: Create singleton instance for import in payments.py
+paystack_service = PaystackService()
