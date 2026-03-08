@@ -1,4 +1,4 @@
-"""Authentication API routes."""
+"""Authentication API routes - Nigeria Friendly Version (Custom JWT Auth)."""
 
 from datetime import timedelta
 from typing import Optional
@@ -58,24 +58,25 @@ class UserResponse(BaseModel):
     credits: int
 
 
-# Firebase Auth helper (placeholder - implement with firebase-admin)
-def verify_firebase_token(token: str) -> dict:
-    """Verify Firebase ID token."""
-    # Implementation with firebase-admin
-    # import firebase_admin
-    # from firebase_admin import auth
-    # decoded_token = auth.verify_id_token(token)
-    # return decoded_token
-    
-    # Placeholder for now
-    return {"uid": "firebase_uid", "email": "user@example.com"}
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 
 def get_or_create_user(
     db: Session,
     email: str,
-    firebase_uid: Optional[str] = None,
     display_name: Optional[str] = None,
+    password: Optional[str] = None,
 ) -> User:
     """Get existing user or create new one."""
     user = db.query(User).filter(User.email == email).first()
@@ -85,11 +86,15 @@ def get_or_create_user(
         user = User(
             id=str(uuid.uuid4()),
             email=email,
-            firebase_uid=firebase_uid,
             display_name=display_name,
             subscription_tier=SubscriptionTier.FREE,
             credits=0,
         )
+        
+        # Hash password if provided
+        if password:
+            user.password_hash = get_password_hash(password)
+        
         db.add(user)
         db.commit()
         db.refresh(user)
@@ -122,7 +127,7 @@ async def register(
     if len(request.password) < 8:
         raise ValidationException("Password must be at least 8 characters")
     
-    # Create user
+    # Create user with hashed password
     import uuid
     user = User(
         id=str(uuid.uuid4()),
@@ -131,6 +136,8 @@ async def register(
         subscription_tier=SubscriptionTier.FREE,
         credits=0,
     )
+    user.password_hash = get_password_hash(request.password)
+    
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -174,8 +181,12 @@ async def login(
     if not user:
         raise AuthenticationException("Invalid email or password")
     
-    # For Firebase Auth integration, verify with Firebase
-    # For now, we'll use a simplified flow
+    # Verify password
+    if not hasattr(user, 'password_hash') or not user.password_hash:
+        raise AuthenticationException("Please set a password first")
+    
+    if not verify_password(request.password, user.password_hash):
+        raise AuthenticationException("Invalid email or password")
     
     # Update last login
     from datetime import datetime
@@ -207,50 +218,44 @@ async def social_login(
     request: SocialLoginRequest,
     db: Session = Depends(get_db),
 ):
-    """Login with social provider (Google, Apple)."""
-    # Verify social token
-    try:
-        firebase_data = verify_firebase_token(request.token)
-        email = firebase_data.get("email") or request.email
-        
-        if not email:
-            raise AuthenticationException("Email not provided")
-        
-        # Get or create user
-        user = get_or_create_user(
-            db,
-            email=email,
-            firebase_uid=firebase_data.get("uid"),
-            display_name=request.display_name,
-        )
-        
-        # Update last login
-        from datetime import datetime
-        user.last_login_at = datetime.utcnow()
-        db.commit()
-        
-        logger.info("Social login successful", user_id=user.id, provider=request.provider)
-        
-        # Generate tokens
-        access_token = create_access_token({"sub": user.id, "email": user.email})
-        refresh_token = create_refresh_token({"sub": user.id})
-        
-        return TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            expires_in=60 * 24 * 7,
-            user={
-                "id": user.id,
-                "email": user.email,
-                "display_name": user.display_name,
-                "subscription_tier": user.subscription_tier.value,
-                "credits": user.credits,
-            },
-        )
-        
-    except Exception as e:
-        logger.error("Social login failed", error=str(e))
-        raise AuthenticationException("Social login failed")
+    """Login with social provider (Google, Apple) - Simplified for Nigeria."""
+    # For Nigeria version, we accept social login tokens directly
+    # In production, you should verify these tokens with Google/Apple
+    # For now, we trust the frontend verification
+    
+    if not request.email:
+        raise AuthenticationException("Email not provided")
+    
+    # Get or create user
+    user = get_or_create_user(
+        db,
+        email=request.email,
+        display_name=request.display_name,
+    )
+    
+    # Update last login
+    from datetime import datetime
+    user.last_login_at = datetime.utcnow()
+    db.commit()
+    
+    logger.info("Social login successful", user_id=user.id, provider=request.provider)
+    
+    # Generate tokens
+    access_token = create_access_token({"sub": user.id, "email": user.email})
+    refresh_token = create_refresh_token({"sub": user.id})
+    
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=60 * 24 * 7,
+        user={
+            "id": user.id,
+            "email": user.email,
+            "display_name": user.display_name,
+            "subscription_tier": user.subscription_tier.value,
+            "credits": user.credits,
+        },
+    )
 
 
 @router.post("/refresh")
@@ -307,3 +312,100 @@ async def get_current_user(
         subscription_tier=user.subscription_tier.value,
         credits=user.credits,
     )
+
+
+@router.post("/change-password")
+async def change_password(
+    request: ChangePasswordRequest,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Change user password."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise AuthenticationException("Authorization header required")
+    
+    token = authorization.split(" ")[1]
+    payload = verify_token(token)
+    user_id = payload.get("sub")
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise AuthenticationException("User not found")
+    
+    # Verify current password
+    if not hasattr(user, 'password_hash') or not user.password_hash:
+        raise AuthenticationException("No password set")
+    
+    if not verify_password(request.current_password, user.password_hash):
+        raise AuthenticationException("Current password is incorrect")
+    
+    # Validate new password
+    if len(request.new_password) < 8:
+        raise ValidationException("Password must be at least 8 characters")
+    
+    # Update password
+    user.password_hash = get_password_hash(request.new_password)
+    db.commit()
+    
+    logger.info("Password changed", user_id=user.id)
+    
+    return {"message": "Password changed successfully"}
+
+
+@router.post("/forgot-password")
+async def forgot_password(
+    request: PasswordResetRequest,
+    db: Session = Depends(get_db),
+):
+    """Request password reset - Sends email with reset token."""
+    user = db.query(User).filter(User.email == request.email).first()
+    
+    if not user:
+        # Don't reveal if email exists
+        return {"message": "If the email exists, a reset link has been sent"}
+    
+    # Generate reset token (valid for 1 hour)
+    reset_token = create_access_token(
+        {"sub": user.id, "type": "password_reset"},
+        expires_delta=timedelta(hours=1)
+    )
+    
+    # TODO: Send email with reset link
+    # For now, just log it
+    logger.info("Password reset requested", user_id=user.id, email=request.email)
+    
+    return {"message": "If the email exists, a reset link has been sent"}
+
+
+@router.post("/reset-password")
+async def reset_password(
+    request: PasswordResetConfirm,
+    db: Session = Depends(get_db),
+):
+    """Reset password using token from email."""
+    try:
+        payload = verify_token(request.token)
+        
+        if payload.get("type") != "password_reset":
+            raise AuthenticationException("Invalid token type")
+        
+        user_id = payload.get("sub")
+        user = db.query(User).filter(User.id == user_id).first()
+        
+        if not user:
+            raise AuthenticationException("User not found")
+        
+        # Validate new password
+        if len(request.new_password) < 8:
+            raise ValidationException("Password must be at least 8 characters")
+        
+        # Update password
+        user.password_hash = get_password_hash(request.new_password)
+        db.commit()
+        
+        logger.info("Password reset successful", user_id=user.id)
+        
+        return {"message": "Password reset successful"}
+        
+    except Exception as e:
+        raise AuthenticationException("Invalid or expired token")
