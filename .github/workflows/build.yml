@@ -22,19 +22,11 @@ jobs:
           flutter-version: '3.19.0'
           channel: 'stable'
       
-      # FIX 1: Create missing asset directories
-      - name: Create Asset Directories
-        run: |
-          mkdir -p assets/images assets/icons assets/animations
-          touch assets/images/.gitkeep
-          touch assets/icons/.gitkeep
-          touch assets/animations/.gitkeep
-      
-      # FIX 2: Don't recreate Android project - just clean and fix existing
+      # FIX: Don't recreate Android project - just clean existing
       - name: Clean Flutter
         run: flutter clean
       
-      # FIX 3: Update Android Config with SDK 34 (not 35) and proper settings
+      # FIX: Update Android Config with SDK 34 (stable) instead of 35
       - name: Update Android Config
         run: |
           cat > android/app/build.gradle << 'EOF'
@@ -65,7 +57,7 @@ jobs:
           android {
               namespace "com.chas.aicreator"
               
-              // FIX: Use SDK 34 (stable) instead of 35
+              # FIX: Use SDK 34 instead of 35 to avoid aapt2 errors
               compileSdkVersion 34
               ndkVersion flutter.ndkVersion
 
@@ -85,7 +77,6 @@ jobs:
               defaultConfig {
                   applicationId "com.chas.aicreator"
                   minSdkVersion 21
-                  // FIX: Target SDK 34 to match compileSdk
                   targetSdkVersion 34
                   versionCode flutterVersionCode.toInteger()
                   versionName flutterVersionName
@@ -94,7 +85,7 @@ jobs:
               buildTypes {
                   release {
                       signingConfig signingConfigs.debug
-                      // FIX: Disable shrinking to avoid resource linking errors
+                      # FIX: Disable shrinking to prevent resource linking errors
                       minifyEnabled false
                       shrinkResources false
                   }
@@ -110,7 +101,7 @@ jobs:
           }
           EOF
           
-          # FIX 4: Update root build.gradle with compatible versions
+          # FIX: Use compatible AGP version
           cat > android/build.gradle << 'EOF'
           buildscript {
               ext.kotlin_version = '1.9.0'
@@ -119,7 +110,6 @@ jobs:
                   mavenCentral()
               }
               dependencies {
-                  // FIX: Use stable AGP version
                   classpath 'com.android.tools.build:gradle:7.4.2'
                   classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
               }
@@ -145,7 +135,7 @@ jobs:
           }
           EOF
           
-          # FIX 5: Update gradle wrapper to compatible version
+          # FIX: Compatible Gradle wrapper
           cat > android/gradle/wrapper/gradle-wrapper.properties << 'EOF'
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
@@ -157,7 +147,7 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
       
-      # FIX 6: Build with no-tree-shake-icons to avoid font issues
+      # FIX: Build with no-tree-shake-icons flag
       - name: Build APK
         run: flutter build apk --release --no-tree-shake-icons
       
