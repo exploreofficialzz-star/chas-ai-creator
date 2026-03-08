@@ -36,12 +36,31 @@ class AppConfig {
 // ==================== THEME CONFIG ====================
 
 class AppTheme {
-  // Colors
+  // Primary Colors
   static const Color primaryColor = Color(0xFF6C63FF);
   static const Color secondaryColor = Color(0xFF00BFA6);
   static const Color accentColor = Color(0xFFFF6584);
   static const Color darkColor = Color(0xFF2D2D3A);
   static const Color lightColor = Color(0xFFF8F9FA);
+  
+  // Status Colors
+  static const Color successColor = Color(0xFF4CAF50);
+  static const Color errorColor = Color(0xFFE53935);
+  static const Color warningColor = Color(0xFFFFB300);
+  static const Color infoColor = Color(0xFF2196F3);
+  
+  // Text Colors
+  static const Color textPrimaryLight = Color(0xFF2D2D3A);
+  static const Color textSecondaryLight = Color(0xFF6B7280);
+  static const Color textPrimaryDark = Color(0xFFFFFFFF);
+  static const Color textSecondaryDark = Color(0xFFB0B0B0);
+  
+  // Gradients
+  static const LinearGradient primaryGradient = LinearGradient(
+    colors: [primaryColor, Color(0xFF8B5CF6)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
   
   // Dark Theme
   static ThemeData get darkTheme {
