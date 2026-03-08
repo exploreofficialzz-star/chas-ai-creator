@@ -1,30 +1,16 @@
- plugins {
+plugins {
     id "com.android.application"
     id "kotlin-android"
     id "dev.flutter.flutter-gradle-plugin"
 }
 
-def localProperties = new Properties()
-def localPropertiesFile = rootProject.file('local.properties')
-if (localPropertiesFile.exists()) {
-    localPropertiesFile.withReader('UTF-8') { reader ->
-        localProperties.load(reader)
-    }
-}
-
-def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
-if (flutterVersionCode == null) {
-    flutterVersionCode = '1'
-}
-
-def flutterVersionName = localProperties.getProperty('flutter.versionName')
-if (flutterVersionName == null) {
-    flutterVersionName = '1.0'
-}
-
 android {
-    namespace "com.chas.aicreator"
+    // FIX: Use compileSdk 34 instead of 35 (more stable)
     compileSdkVersion 34
+    
+    // FIX: Add namespace for newer Gradle versions
+    namespace "com.chas_ai.creator"
+    
     ndkVersion flutter.ndkVersion
 
     compileOptions {
@@ -41,19 +27,27 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.chas.aicreator"
+        applicationId "com.chas_ai.creator"
         minSdkVersion 21
-        targetSdkVersion 34
-        versionCode flutterVersionCode.toInteger()
-        versionName flutterVersionName
+        targetSdkVersion 34  // FIX: Match compileSdk
+        versionCode flutter.versionCode
+        versionName flutter.versionName
+        
+        // FIX: Disable shrinking for now to avoid resource issues
+        resConfigs "en"
     }
 
     buildTypes {
         release {
             signingConfig signingConfigs.debug
-            minifyEnabled true
-            shrinkResources true
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            
+            // FIX: Add these to prevent resource shrinking issues
+            shrinkResources false
+            minifyEnabled false
+            
+            // Or if you need ProGuard:
+            // minifyEnabled true
+            // proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
 }
@@ -63,5 +57,5 @@ flutter {
 }
 
 dependencies {
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.0"
 }
