@@ -19,7 +19,7 @@ dependencies:
   # UI
   cupertino_icons: ^1.0.6
   flutter_screenutil: ^5.9.0
-  google_fonts: ^6.1.0
+  google_fonts: ^4.0.4  # Downgraded for http compatibility
   flutter_svg: ^2.0.9
   shimmer: ^3.0.0
   cached_network_image: ^3.3.1
@@ -39,7 +39,7 @@ dependencies:
   
   # Networking
   dio: ^5.4.0
-  http: ^0.13.5  # Downgraded for flutter_paystack compatibility
+  http: ^0.13.5  # Compatible with flutter_paystack
   retrofit: ^4.0.3
   connectivity_plus: ^5.0.2
   
@@ -62,7 +62,7 @@ dependencies:
   photo_view: ^0.14.0
   
   # Utils
-  intl: ^0.17.0  # Downgraded for flutter_paystack compatibility
+  intl: ^0.17.0  # Compatible with flutter_paystack
   uuid: ^4.3.3
   path_provider: ^2.1.1
   permission_handler: ^11.1.0
@@ -95,9 +95,6 @@ dev_dependencies:
   json_serializable: ^6.7.1
   mockito: ^5.4.4
   hive_generator: ^2.0.1
-
-# Remove dependency_overrides - not needed anymore
-# All versions are now compatible
 
 flutter:
   uses-material-design: true
