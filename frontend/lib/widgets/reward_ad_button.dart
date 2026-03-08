@@ -1,8 +1,3 @@
-/*
-Reward Ad Button - Unity Ads Implementation
-Created by: chAs
-*/
-
 import 'package:flutter/material.dart';
 import '../services/ad_service.dart';
 
