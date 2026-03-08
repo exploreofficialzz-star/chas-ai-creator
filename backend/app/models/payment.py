@@ -146,7 +146,8 @@ class Payment(Base):
     
     # Description
     description = Column(Text, nullable=True)
-    metadata = Column(JSON, default=dict)
+    # FIXED: Renamed 'metadata' to 'payment_metadata' - 'metadata' is reserved by SQLAlchemy
+    payment_metadata = Column(JSON, default=dict)
     
     # Credits (for credit purchases)
     credits_purchased = Column(Integer, nullable=True)
@@ -181,6 +182,7 @@ class Payment(Base):
             "amount": self.amount,
             "currency": self.currency,
             "description": self.description,
+            "payment_metadata": self.payment_metadata,  # Updated key name
             "credits_purchased": self.credits_purchased,
             "plan_id": self.plan_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -235,4 +237,4 @@ class CreditPackage(Base):
             "price_usd": self.price_usd,
             "currency": self.currency,
             "is_popular": self.is_popular,
-    }
+        }
