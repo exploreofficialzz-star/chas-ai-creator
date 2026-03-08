@@ -4,16 +4,14 @@
  * Copyright (c) 2024 chAs. All rights reserved.
  * 
  * AI-powered video content automation platform
+ * Nigeria Friendly Version - No Firebase, Uses Custom JWT & Unity Ads
  */
 
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 import 'app.dart';
 import 'config/theme.dart';
@@ -24,23 +22,24 @@ import 'services/auth_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Initialize Firebase
-  await Firebase.initializeApp();
+  // NOTE: Firebase initialization removed - Nigeria Friendly Version
+  // Using Custom JWT Authentication instead of Firebase Auth
   
-  // Initialize Crashlytics
+  // Initialize error handling (without Firebase Crashlytics)
   FlutterError.onError = (errorDetails) {
-    FirebaseCrashlytics.instance.recordFlutterFatalError(errorDetails);
+    if (kDebugMode) {
+      print('Flutter Error: ${errorDetails.exception}');
+    }
   };
   
   PlatformDispatcher.instance.onError = (error, stack) {
-    FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+    if (kDebugMode) {
+      print('Platform Error: $error');
+    }
     return true;
   };
   
-  // Initialize Google Mobile Ads
-  await MobileAds.instance.initialize();
-  
-  // Initialize Ad Service
+  // Initialize Unity Ads (Nigeria Friendly - replaces Google AdMob)
   await AdService().initialize();
   
   // Set preferred orientations
