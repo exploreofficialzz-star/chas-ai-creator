@@ -40,7 +40,13 @@ void main() async {
   };
   
   // Initialize Unity Ads (Nigeria Friendly - replaces Google AdMob)
-  await AdService().initialize();
+  try {
+    await AdService().initialize();
+  } catch (e) {
+    if (kDebugMode) {
+      print('Ad Service Init Error: $e');
+    }
+  }
   
   // Set preferred orientations
   await SystemChrome.setPreferredOrientations([
