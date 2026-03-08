@@ -28,6 +28,15 @@ jobs:
           rm -rf android
           flutter create --platforms=android .
       
+      - name: Update Android Config
+        run: |
+          # Update compileSdkVersion to 35
+          sed -i 's/compileSdkVersion 34/compileSdkVersion 35/g' android/app/build.gradle
+          sed -i 's/targetSdkVersion 34/targetSdkVersion 35/g' android/app/build.gradle
+          
+          # Update Kotlin version to 1.9.0
+          sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = '\''1.9.0'\''/g' android/build.gradle
+      
       - name: Install dependencies
         run: flutter pub get
       
