@@ -511,13 +511,13 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
                   
                   SizedBox(height: 32.h),
                   
-                  // Actions
+                  // Actions - FIXED: Wrapped in lambda functions
                   Row(
                     children: [
                       Expanded(
                         child: CustomButton(
                           text: 'Preview',
-                          onPressed: _isGenerating ? null : _generatePreview,
+                          onPressed: _isGenerating ? null : () => _generatePreview(),
                           isLoading: _isGenerating,
                           isOutlined: true,
                         ),
@@ -526,7 +526,7 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
                       Expanded(
                         child: CustomButton(
                           text: 'Create Video',
-                          onPressed: _isGenerating ? null : _createVideo,
+                          onPressed: _isGenerating ? null : () => _createVideo(),
                           isLoading: _isGenerating,
                         ),
                       ),
@@ -549,3 +549,4 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
     );
   }
 }
+
