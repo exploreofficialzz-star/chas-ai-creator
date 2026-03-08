@@ -1,22 +1,22 @@
 workflows:
-  flutter-build:
-    name: Build Flutter App
-    instance_type: mac_mini_m1
-    max_build_duration: 30
-    working_directory: frontend  # This tells Codemagic where to look
+  flutter-app:
+    name: ChAs AI Creator Build
+    instance_type: linux
+    working_directory: frontend
     
     environment:
       flutter: stable
-      xcode: latest
-      cocoapods: default
     
     scripts:
-      - name: Get dependencies
-        script: flutter pub get
-        
-      - name: Build APK
-        script: flutter build apk --release
-        
+      - name: Install dependencies
+        script: |
+          cd frontend
+          flutter pub get
+      
+      - name: Build Android APK
+        script: |
+          cd frontend
+          flutter build apk --release
+    
     artifacts:
-      - build/app/outputs/flutter-apk/app-release.apk
-
+      - frontend/build/app/outputs/flutter-apk/app-release.apk
