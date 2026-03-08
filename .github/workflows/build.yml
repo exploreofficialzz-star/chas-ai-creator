@@ -22,11 +22,80 @@ jobs:
           flutter-version: '3.19.0'
           channel: 'stable'
       
-      # FIX: Don't recreate Android project - just clean existing
       - name: Clean Flutter
         run: flutter clean
       
-      # FIX: Update Android Config with SDK 34 (stable) instead of 35
+      # FIX: Create Android project with V2 embedding explicitly
+      - name: Recreate Android Project with V2 Embedding
+        run: |
+          rm -rf android
+          flutter config --enable-android
+          flutter create --platforms=android .
+      
+      # FIX: Update AndroidManifest.xml for V2 embedding
+      - name: Fix AndroidManifest for V2 Embedding
+        run: |
+          cat > android/app/src/main/AndroidManifest.xml << 'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:label="chas_ai_creator"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <!-- Specifies an Android theme to apply to this Activity as soon as
+                           the Android process has started. This theme is visible to the user
+                           while the Flutter UI initializes. After that, this theme continues
+                           to determine the Window background behind the Flutter UI. -->
+                      <meta-data
+                        android:name="io.flutter.embedding.android.NormalTheme"
+                        android:resource="@style/NormalTheme"
+                        />
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  <!-- Don't delete the meta-data below.
+                       This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2" />
+              </application>
+              <!-- Required to query activities that can process text, see:
+                   https://developer.android.com/training/package-visibility?hl=en and
+                   https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
+                   
+                   In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
+              <queries>
+                  <intent>
+                      <action android:name="android.intent.action.PROCESS_TEXT"/>
+                      <data android:mimeType="text/plain"/>
+                  </intent>
+              </queries>
+          </manifest>
+          EOF
+      
+      # FIX: Update MainActivity.kt for V2 embedding
+      - name: Fix MainActivity for V2 Embedding
+        run: |
+          mkdir -p android/app/src/main/kotlin/com/chas/aicreator
+          cat > android/app/src/main/kotlin/com/chas/aicreator/MainActivity.kt << 'EOF'
+          package com.chas.aicreator
+
+          import io.flutter.embedding.android.FlutterActivity
+
+          class MainActivity: FlutterActivity() {
+          }
+          EOF
+      
+      # FIX: Update app build.gradle with SDK 34 and proper config
       - name: Update Android Config
         run: |
           cat > android/app/build.gradle << 'EOF'
@@ -56,8 +125,6 @@ jobs:
 
           android {
               namespace "com.chas.aicreator"
-              
-              # FIX: Use SDK 34 instead of 35 to avoid aapt2 errors
               compileSdkVersion 34
               ndkVersion flutter.ndkVersion
 
@@ -85,7 +152,6 @@ jobs:
               buildTypes {
                   release {
                       signingConfig signingConfigs.debug
-                      # FIX: Disable shrinking to prevent resource linking errors
                       minifyEnabled false
                       shrinkResources false
                   }
@@ -101,7 +167,7 @@ jobs:
           }
           EOF
           
-          # FIX: Use compatible AGP version
+          # FIX: Root build.gradle with compatible AGP
           cat > android/build.gradle << 'EOF'
           buildscript {
               ext.kotlin_version = '1.9.0'
@@ -135,7 +201,7 @@ jobs:
           }
           EOF
           
-          # FIX: Compatible Gradle wrapper
+          # FIX: Gradle wrapper properties
           cat > android/gradle/wrapper/gradle-wrapper.properties << 'EOF'
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
@@ -147,7 +213,6 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
       
-      # FIX: Build with no-tree-shake-icons flag
       - name: Build APK
         run: flutter build apk --release --no-tree-shake-icons
       
