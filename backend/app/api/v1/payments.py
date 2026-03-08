@@ -1,6 +1,7 @@
-"""Payment and subscription API routes."""
+"""Payment and subscription API routes - Nigeria Friendly Version (Paystack)."""
 
 from typing import Optional, List
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel
@@ -16,6 +17,7 @@ from app.core.security import verify_token
 from app.db.base import get_db
 from app.models.user import User, SubscriptionTier
 from app.models.payment import SubscriptionPlan, Payment, CreditPackage, PaymentStatus
+from app.services.paystack_service import paystack_service
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -47,8 +49,13 @@ class CreateSubscriptionRequest(BaseModel):
     billing_cycle: str = "monthly"  # monthly, yearly
 
 
-class CreatePaymentIntentRequest(BaseModel):
+class InitializePaymentRequest(BaseModel):
     package_id: str
+    callback_url: Optional[str] = None
+
+
+class VerifyPaymentRequest(BaseModel):
+    reference: str
 
 
 class SubscriptionResponse(BaseModel):
@@ -56,8 +63,8 @@ class SubscriptionResponse(BaseModel):
     name: str
     slug: str
     description: Optional[str]
-    price_monthly: Optional[float]
-    price_yearly: Optional[float]
+    price_monthly_ngn: Optional[float]
+    price_yearly_ngn: Optional[float]
     currency: str
     daily_video_limit: int
     max_video_length: int
@@ -79,23 +86,16 @@ class CreditPackageResponse(BaseModel):
     credits: int
     bonus_credits: int
     total_credits: int
-    price: float
+    price_ngn: float
     currency: str
     is_popular: bool
-
-
-# Stripe integration helper
-import stripe
-from app.config import settings
-
-stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
 @router.get("/plans")
 async def get_subscription_plans(
     db: Session = Depends(get_db),
 ):
-    """Get available subscription plans."""
+    """Get available subscription plans with Nigeria pricing."""
     plans = db.query(SubscriptionPlan).filter(
         SubscriptionPlan.is_active == True
     ).order_by(SubscriptionPlan.display_order).all()
@@ -106,9 +106,9 @@ async def get_subscription_plans(
             name=p.name,
             slug=p.slug,
             description=p.description,
-            price_monthly=p.price_monthly,
-            price_yearly=p.price_yearly,
-            currency=p.currency,
+            price_monthly_ngn=p.price_monthly_ngn,
+            price_yearly_ngn=p.price_yearly_ngn,
+            currency="NGN",
             daily_video_limit=p.daily_video_limit,
             max_video_length=p.max_video_length,
             max_video_resolution=p.max_video_resolution,
@@ -128,7 +128,7 @@ async def get_subscription_plans(
 async def get_credit_packages(
     db: Session = Depends(get_db),
 ):
-    """Get available credit packages."""
+    """Get available credit packages with Nigeria pricing."""
     packages = db.query(CreditPackage).filter(
         CreditPackage.is_active == True
     ).order_by(CreditPackage.display_order).all()
@@ -141,118 +141,20 @@ async def get_credit_packages(
             credits=p.credits,
             bonus_credits=p.bonus_credits,
             total_credits=p.credits + p.bonus_credits,
-            price=p.price,
-            currency=p.currency,
+            price_ngn=p.price_ngn,
+            currency="NGN",
             is_popular=p.is_popular,
         ) for p in packages]
     }
 
 
-@router.post("/subscribe")
-async def create_subscription(
-    request: CreateSubscriptionRequest,
+@router.post("/initialize")
+async def initialize_payment(
+    request: InitializePaymentRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Create subscription."""
-    # Get plan
-    plan = db.query(SubscriptionPlan).filter(
-        SubscriptionPlan.id == request.plan_id,
-        SubscriptionPlan.is_active == True
-    ).first()
-    
-    if not plan:
-        raise NotFoundException("Plan not found")
-    
-    # Get or create Stripe customer
-    try:
-        if not current_user.subscription or not current_user.subscription.stripe_customer_id:
-            customer = stripe.Customer.create(
-                email=current_user.email,
-                metadata={"user_id": current_user.id},
-            )
-            stripe_customer_id = customer.id
-        else:
-            stripe_customer_id = current_user.subscription.stripe_customer_id
-        
-        # Get price ID
-        price_id = plan.stripe_price_id_monthly if request.billing_cycle == "monthly" else plan.stripe_price_id_yearly
-        
-        if not price_id:
-            raise PaymentException("Plan pricing not configured")
-        
-        # Create subscription
-        subscription = stripe.Subscription.create(
-            customer=stripe_customer_id,
-            items=[{"price": price_id}],
-            metadata={"user_id": current_user.id, "plan_id": plan.id},
-        )
-        
-        # Create payment record
-        import uuid
-        payment = Payment(
-            id=str(uuid.uuid4()),
-            user_id=current_user.id,
-            payment_type="subscription",
-            status=PaymentStatus.COMPLETED,
-            amount=plan.price_monthly if request.billing_cycle == "monthly" else plan.price_yearly,
-            currency=plan.currency,
-            stripe_subscription_id=subscription.id,
-            plan_id=plan.id,
-            description=f"{plan.name} subscription ({request.billing_cycle})",
-        )
-        db.add(payment)
-        
-        # Update user subscription
-        from app.models.user import UserSubscription
-        if not current_user.subscription:
-            user_sub = UserSubscription(
-                id=str(uuid.uuid4()),
-                user_id=current_user.id,
-                stripe_customer_id=stripe_customer_id,
-                stripe_subscription_id=subscription.id,
-                plan_id=plan.slug,
-            )
-            db.add(user_sub)
-        else:
-            current_user.subscription.stripe_subscription_id = subscription.id
-            current_user.subscription.plan_id = plan.slug
-        
-        # Update user tier
-        tier_map = {
-            "free": SubscriptionTier.FREE,
-            "pro": SubscriptionTier.PRO,
-            "enterprise": SubscriptionTier.ENTERPRISE,
-        }
-        current_user.subscription_tier = tier_map.get(plan.slug, SubscriptionTier.FREE)
-        
-        db.commit()
-        
-        logger.info(
-            "Subscription created",
-            user_id=current_user.id,
-            plan_id=plan.id,
-            subscription_id=subscription.id,
-        )
-        
-        return {
-            "message": "Subscription created successfully",
-            "subscription_id": subscription.id,
-            "status": subscription.status,
-        }
-        
-    except stripe.error.StripeError as e:
-        logger.error("Stripe error", error=str(e))
-        raise PaymentException(f"Payment failed: {str(e)}")
-
-
-@router.post("/create-payment-intent")
-async def create_payment_intent(
-    request: CreatePaymentIntentRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Create payment intent for credit purchase."""
+    """Initialize Paystack payment for credit purchase."""
     # Get package
     package = db.query(CreditPackage).filter(
         CreditPackage.id == request.package_id,
@@ -263,27 +165,34 @@ async def create_payment_intent(
         raise NotFoundException("Package not found")
     
     try:
-        # Create payment intent
-        intent = stripe.PaymentIntent.create(
-            amount=int(package.price * 100),  # Convert to cents
-            currency=package.currency.lower(),
+        # Generate unique reference
+        import uuid
+        reference = f"chas_{current_user.id}_{package.id}_{uuid.uuid4().hex[:8]}"
+        
+        # Initialize Paystack transaction
+        amount_ngn = package.price_ngn
+        
+        result = await paystack_service.initialize_transaction(
+            email=current_user.email,
+            amount=amount_ngn,
+            reference=reference,
+            callback_url=request.callback_url,
             metadata={
                 "user_id": current_user.id,
                 "package_id": package.id,
                 "credits": package.credits + package.bonus_credits,
-            },
+            }
         )
         
         # Create pending payment record
-        import uuid
         payment = Payment(
             id=str(uuid.uuid4()),
             user_id=current_user.id,
             payment_type="credits",
             status=PaymentStatus.PENDING,
-            amount=package.price,
-            currency=package.currency,
-            stripe_payment_intent_id=intent.id,
+            amount=amount_ngn,
+            currency="NGN",
+            paystack_reference=reference,
             credits_purchased=package.credits + package.bonus_credits,
             description=f"{package.credits + package.bonus_credits} credits",
         )
@@ -291,76 +200,237 @@ async def create_payment_intent(
         db.commit()
         
         logger.info(
-            "Payment intent created",
+            "Payment initialized",
             user_id=current_user.id,
             package_id=package.id,
-            intent_id=intent.id,
+            reference=reference,
         )
         
         return {
-            "client_secret": intent.client_secret,
-            "payment_intent_id": intent.id,
+            "authorization_url": result.get("authorization_url"),
+            "reference": reference,
+            "access_code": result.get("access_code"),
         }
         
-    except stripe.error.StripeError as e:
-        logger.error("Stripe error", error=str(e))
-        raise PaymentException(f"Payment failed: {str(e)}")
+    except Exception as e:
+        logger.error("Paystack initialization error", error=str(e))
+        raise PaymentException(f"Payment initialization failed: {str(e)}")
+
+
+@router.post("/verify")
+async def verify_payment(
+    request: VerifyPaymentRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Verify Paystack payment and add credits."""
+    try:
+        # Verify with Paystack
+        result = await paystack_service.verify_transaction(request.reference)
+        
+        if not result.get("status"):
+            raise PaymentException("Payment verification failed")
+        
+        payment_data = result.get("data", {})
+        
+        if payment_data.get("status") != "success":
+            raise PaymentException(f"Payment status: {payment_data.get('status')}")
+        
+        # Find payment record
+        payment = db.query(Payment).filter(
+            Payment.paystack_reference == request.reference,
+            Payment.user_id == current_user.id,
+        ).first()
+        
+        if not payment:
+            raise NotFoundException("Payment record not found")
+        
+        if payment.status == PaymentStatus.COMPLETED:
+            return {
+                "message": "Payment already processed",
+                "credits_added": payment.credits_purchased,
+            }
+        
+        # Update payment status
+        payment.status = PaymentStatus.COMPLETED
+        payment.completed_at = datetime.utcnow()
+        payment.paystack_transaction_id = str(payment_data.get("id"))
+        
+        # Add credits to user
+        if payment.credits_purchased:
+            current_user.credits += payment.credits_purchased
+        
+        db.commit()
+        
+        logger.info(
+            "Payment verified and credits added",
+            payment_id=payment.id,
+            user_id=current_user.id,
+            credits=payment.credits_purchased,
+        )
+        
+        return {
+            "message": "Payment successful",
+            "credits_added": payment.credits_purchased,
+            "total_credits": current_user.credits,
+        }
+        
+    except PaymentException:
+        raise
+    except Exception as e:
+        logger.error("Payment verification error", error=str(e))
+        raise PaymentException(f"Payment verification failed: {str(e)}")
+
+
+@router.post("/subscribe")
+async def create_subscription(
+    request: CreateSubscriptionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create subscription using Paystack."""
+    # Get plan
+    plan = db.query(SubscriptionPlan).filter(
+        SubscriptionPlan.id == request.plan_id,
+        SubscriptionPlan.is_active == True
+    ).first()
+    
+    if not plan:
+        raise NotFoundException("Plan not found")
+    
+    try:
+        # Get price in Naira
+        amount_ngn = plan.price_monthly_ngn if request.billing_cycle == "monthly" else plan.price_yearly_ngn
+        
+        if not amount_ngn:
+            raise PaymentException("Plan pricing not configured")
+        
+        # Generate reference
+        import uuid
+        reference = f"chas_sub_{current_user.id}_{plan.id}_{uuid.uuid4().hex[:8]}"
+        
+        # Initialize transaction
+        result = await paystack_service.initialize_transaction(
+            email=current_user.email,
+            amount=amount_ngn,
+            reference=reference,
+            metadata={
+                "user_id": current_user.id,
+                "plan_id": plan.id,
+                "billing_cycle": request.billing_cycle,
+                "type": "subscription",
+            }
+        )
+        
+        # Create payment record
+        payment = Payment(
+            id=str(uuid.uuid4()),
+            user_id=current_user.id,
+            payment_type="subscription",
+            status=PaymentStatus.PENDING,
+            amount=amount_ngn,
+            currency="NGN",
+            paystack_reference=reference,
+            plan_id=plan.id,
+            description=f"{plan.name} subscription ({request.billing_cycle})",
+        )
+        db.add(payment)
+        db.commit()
+        
+        logger.info(
+            "Subscription payment initialized",
+            user_id=current_user.id,
+            plan_id=plan.id,
+            reference=reference,
+        )
+        
+        return {
+            "authorization_url": result.get("authorization_url"),
+            "reference": reference,
+            "access_code": result.get("access_code"),
+            "message": "Please complete payment to activate subscription",
+        }
+        
+    except Exception as e:
+        logger.error("Subscription creation error", error=str(e))
+        raise PaymentException(f"Subscription creation failed: {str(e)}")
 
 
 @router.post("/webhook")
-async def stripe_webhook(
+async def paystack_webhook(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """Handle Stripe webhooks."""
+    """Handle Paystack webhooks."""
     payload = await request.body()
-    sig_header = request.headers.get("stripe-signature")
     
     try:
-        event = stripe.Webhook.construct_event(
-            payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
-        )
-    except ValueError:
-        raise PaymentException("Invalid payload")
-    except stripe.error.SignatureVerificationError:
-        raise PaymentException("Invalid signature")
-    
-    # Handle events
-    if event["type"] == "payment_intent.succeeded":
-        payment_intent = event["data"]["object"]
+        import json
+        event = json.loads(payload)
         
-        # Update payment status
-        payment = db.query(Payment).filter(
-            Payment.stripe_payment_intent_id == payment_intent["id"]
-        ).first()
+        event_type = event.get("event")
+        data = event.get("data", {})
         
-        if payment:
-            payment.status = PaymentStatus.COMPLETED
-            payment.completed_at = datetime.utcnow()
-            
-            # Add credits to user
-            user = db.query(User).filter(User.id == payment.user_id).first()
-            if user and payment.credits_purchased:
-                user.credits += payment.credits_purchased
-            
-            db.commit()
-            
-            logger.info(
-                "Payment completed",
-                payment_id=payment.id,
-                user_id=payment.user_id,
-                credits=payment.credits_purchased,
-            )
-    
-    elif event["type"] == "invoice.payment_failed":
-        subscription = event["data"]["object"]
+        logger.info("Paystack webhook received", event=event_type)
         
-        logger.warning(
-            "Subscription payment failed",
-            subscription_id=subscription.get("subscription"),
-        )
-    
-    return {"status": "success"}
+        if event_type == "charge.success":
+            reference = data.get("reference")
+            
+            # Find payment
+            payment = db.query(Payment).filter(
+                Payment.paystack_reference == reference
+            ).first()
+            
+            if payment and payment.status != PaymentStatus.COMPLETED:
+                payment.status = PaymentStatus.COMPLETED
+                payment.completed_at = datetime.utcnow()
+                payment.paystack_transaction_id = str(data.get("id"))
+                
+                # Add credits if credit purchase
+                if payment.credits_purchased:
+                    user = db.query(User).filter(User.id == payment.user_id).first()
+                    if user:
+                        user.credits += payment.credits_purchased
+                
+                # Update subscription if subscription purchase
+                if payment.payment_type == "subscription" and payment.plan_id:
+                    user = db.query(User).filter(User.id == payment.user_id).first()
+                    if user:
+                        tier_map = {
+                            "free": SubscriptionTier.FREE,
+                            "pro": SubscriptionTier.PRO,
+                            "enterprise": SubscriptionTier.ENTERPRISE,
+                        }
+                        plan = db.query(SubscriptionPlan).filter(
+                            SubscriptionPlan.id == payment.plan_id
+                        ).first()
+                        if plan:
+                            user.subscription_tier = tier_map.get(plan.slug, SubscriptionTier.FREE)
+                            user.subscription_expires_at = datetime.utcnow()
+                            # Add 30 days or 365 days based on billing cycle
+                            from dateutil.relativedelta import relativedelta
+                            if "year" in payment.description.lower():
+                                user.subscription_expires_at += relativedelta(years=1)
+                            else:
+                                user.subscription_expires_at += relativedelta(months=1)
+                
+                db.commit()
+                
+                logger.info(
+                    "Payment completed via webhook",
+                    payment_id=payment.id,
+                    reference=reference,
+                )
+        
+        elif event_type == "subscription.disable":
+            # Handle subscription cancellation
+            logger.info("Subscription disabled", data=data)
+        
+        return {"status": "success"}
+        
+    except Exception as e:
+        logger.error("Webhook processing error", error=str(e))
+        return {"status": "error", "message": str(e)}
 
 
 @router.get("/history")
@@ -376,13 +446,14 @@ async def get_payment_history(
     return {
         "payments": [{
             "id": p.id,
-            "type": p.payment_type.value,
-            "status": p.status.value,
+            "type": p.payment_type.value if hasattr(p.payment_type, 'value') else str(p.payment_type),
+            "status": p.status.value if hasattr(p.status, 'value') else str(p.status),
             "amount": p.amount,
             "currency": p.currency,
             "description": p.description,
             "credits_purchased": p.credits_purchased,
-            "created_at": p.created_at.isoformat(),
+            "paystack_reference": p.paystack_reference,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
             "completed_at": p.completed_at.isoformat() if p.completed_at else None,
         } for p in payments]
     }
@@ -394,25 +465,20 @@ async def cancel_subscription(
     db: Session = Depends(get_db),
 ):
     """Cancel subscription."""
-    if not current_user.subscription or not current_user.subscription.stripe_subscription_id:
+    if not current_user.subscription:
         raise NotFoundException("No active subscription found")
     
     try:
-        # Cancel at period end
-        stripe.Subscription.modify(
-            current_user.subscription.stripe_subscription_id,
-            cancel_at_period_end=True,
-        )
-        
+        # For Paystack, we mark for cancellation at period end
         current_user.subscription.cancel_at_period_end = True
         db.commit()
         
-        logger.info("Subscription cancelled", user_id=current_user.id)
+        logger.info("Subscription marked for cancellation", user_id=current_user.id)
         
         return {"message": "Subscription will be cancelled at the end of the billing period"}
         
-    except stripe.error.StripeError as e:
-        logger.error("Stripe error", error=str(e))
+    except Exception as e:
+        logger.error("Cancel subscription error", error=str(e))
         raise PaymentException(f"Failed to cancel subscription: {str(e)}")
 
 
@@ -436,4 +502,4 @@ async def get_current_subscription(
         "cancel_at_period_end": current_user.subscription.cancel_at_period_end 
             if current_user.subscription else False,
         "plan": plan.to_dict() if plan else None,
-}
+    }
