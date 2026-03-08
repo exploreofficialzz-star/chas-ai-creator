@@ -1,8 +1,9 @@
 name: chas_ai_creator
-description: chAs AI Creator - AI-powered video content automation platform
+description: chAs AI Creator - AI-powered video content automation platform (Nigeria Friendly Version)
 
 # Created by: chAs
 # Copyright (c) 2024 chAs. All rights reserved.
+# Nigeria Friendly - No Firebase, No Stripe, Uses Unity Ads & Paystack
 
 publish_to: 'none'
 
@@ -38,14 +39,15 @@ dependencies:
   
   # Networking
   dio: ^5.4.0
+  http: ^1.1.0
   retrofit: ^4.0.3
   connectivity_plus: ^5.0.2
   
-  # Authentication
-  firebase_auth: ^4.16.0
-  firebase_core: ^2.24.2
-  google_sign_in: ^6.1.6
-  sign_in_with_apple: ^5.0.0
+  # Authentication - Custom JWT (Nigeria Friendly, No Firebase)
+  # Removed: firebase_auth, firebase_core
+  # Using custom JWT authentication instead
+  google_sign_in: ^6.1.6  # Optional for Google login
+  sign_in_with_apple: ^5.0.0  # Optional for Apple login
   
   # Storage
   shared_preferences: ^2.2.2
@@ -56,7 +58,6 @@ dependencies:
   # Video
   video_player: ^2.8.2
   chewie: ^1.7.1
-  better_player: ^0.0.84
   
   # Image
   image_picker: ^1.0.7
@@ -72,25 +73,23 @@ dependencies:
   package_info_plus: ^5.0.1
   device_info_plus: ^9.1.1
   
-  # Ads - Google AdMob
-  google_mobile_ads: ^4.0.0
+  # Ads - Unity Ads (Nigeria Friendly, replaces Google AdMob)
+  # Unity Ads works in Nigeria unlike Google AdMob
+  unity_ads_plugin: ^0.3.8
   
-  # Payments
-  flutter_stripe: ^10.0.0
-  purchases_flutter: ^6.1.0
+  # Payments - Paystack (Nigeria Payment Gateway)
+  # Removed: flutter_stripe, purchases_flutter
+  # Using Paystack Flutter SDK
+  flutter_paystack: ^1.0.7
   
-  # Notifications
-  firebase_messaging: ^14.7.10
+  # Notifications - Local only (No Firebase)
   flutter_local_notifications: ^16.3.0
-  
-  # Analytics
-  firebase_analytics: ^10.8.0
-  
-  # Crash Reporting
-  firebase_crashlytics: ^3.4.9
   
   # In-app review
   in_app_review: ^2.0.8
+  
+  # WebView for Paystack
+  webview_flutter: ^4.4.2
 
 dev_dependencies:
   flutter_test:
@@ -110,7 +109,6 @@ flutter:
     - assets/icons/
     - assets/fonts/
     - assets/animations/
-    - assets/ads/
   
   fonts:
     - family: Inter
