@@ -1,82 +1,53 @@
 /*
- * chAs AI Creator - Banner Ad Container
- * Created by: chAs
- * Widget for displaying banner ads
- */
+Banner Ad Container - Unity Ads Implementation
+Created by: chAs
+*/
 
 import 'package:flutter/material.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:google_mobile_ads/google_mobile_ads.dart';
-
+import 'package:unity_ads_plugin/unity_ads_plugin.dart';
 import '../services/ad_service.dart';
 
 class BannerAdContainer extends StatefulWidget {
-  final String adSize;
+  final bool isLarge;
   
   const BannerAdContainer({
-    super.key,
-    this.adSize = 'banner', // 'banner' or 'medium'
-  });
+    Key? key,
+    this.isLarge = false,
+  }) : super(key: key);
 
   @override
   State<BannerAdContainer> createState() => _BannerAdContainerState();
 }
 
 class _BannerAdContainerState extends State<BannerAdContainer> {
-  BannerAd? _bannerAd;
   bool _isLoaded = false;
+  bool _hasError = false;
 
   @override
-  void initState() {
-    super.initState();
-    _loadAd();
-  }
+  Widget build(BuildContext context) {
+    if (_hasError) {
+      return const SizedBox.shrink();
+    }
 
-  void _loadAd() {
-    final adSize = widget.adSize == 'medium' 
-        ? AdSize.mediumRectangle 
-        : AdSize.banner;
-    
-    _bannerAd = BannerAd(
-      adUnitId: AdService().bannerAdUnitId,
-      size: adSize,
-      request: const AdRequest(),
-      listener: BannerAdListener(
-        onAdLoaded: (ad) {
+    return Container(
+      width: double.infinity,
+      height: widget.isLarge ? 250 : 100,
+      alignment: Alignment.center,
+      child: UnityBannerAd(
+        placementId: AdService().bannerAdUnitId,
+        onLoad: (placementId) {
           setState(() {
             _isLoaded = true;
           });
         },
-        onAdFailedToLoad: (ad, error) {
-          ad.dispose();
+        onClick: (placementId) {
+          debugPrint('👆 Banner clicked: $placementId');
         },
-      ),
-    )..load();
-  }
-
-  @override
-  void dispose() {
-    _bannerAd?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!_isLoaded || _bannerAd == null) {
-      return const SizedBox.shrink();
-    }
-    
-    return Container(
-      alignment: Alignment.center,
-      width: _bannerAd!.size.width.toDouble(),
-      height: _bannerAd!.size.height.toDouble(),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(8.r),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8.r),
-        child: AdWidget(ad: _bannerAd!),
+        onFailed: (placementId, error, message) {
+          setState(() {
+            _hasError = true;
+          });
+        },
       ),
     );
   }
