@@ -1,3 +1,9 @@
+/*
+ * chAs AI Creator - API Service
+ * Created by: chAs
+ * Nigeria Friendly Version - Uses Custom JWT Auth
+ */
+
 import 'dart:convert';
 import 'dart:io';
 
@@ -12,7 +18,9 @@ class ApiService {
   final AuthService _authService = AuthService();
   
   // API Base URL - Change this for production
-  static const String baseUrl = 'http://localhost:8000/api/v1';
+  // Use your Railway deployed backend URL
+  static const String baseUrl = 'https://your-app.railway.app/api/v1';
+  // For local development: 'http://localhost:8000/api/v1'
   
   ApiService() {
     _dio = Dio(BaseOptions(
@@ -28,16 +36,26 @@ class ApiService {
     // Add interceptor for authentication
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
-        final token = await _authService.getIdToken();
+        final token = await _authService.getAccessToken();
         if (token != null) {
           options.headers['Authorization'] = 'Bearer $token';
         }
         return handler.next(options);
       },
-      onError: (error, handler) {
+      onError: (error, handler) async {
         if (error.response?.statusCode == 401) {
-          // Handle unauthorized
-          _authService.signOut();
+          // Try to refresh token
+          final newToken = await _authService.refreshAccessToken();
+          
+          if (newToken != null) {
+            // Retry the request with new token
+            error.requestOptions.headers['Authorization'] = 'Bearer $newToken';
+            final response = await _dio.fetch(error.requestOptions);
+            return handler.resolve(response);
+          } else {
+            // Token refresh failed, sign out
+            await _authService.signOut();
+          }
         }
         return handler.next(error);
       },
@@ -265,7 +283,7 @@ class ApiService {
     return response.data;
   }
 
-  // Payment APIs
+  // Payment APIs - Paystack (Nigeria Friendly)
   Future<Map<String, dynamic>> getSubscriptionPlans() async {
     final response = await _dio.get('/payments/plans');
     return response.data;
@@ -276,6 +294,27 @@ class ApiService {
     return response.data;
   }
 
+  /// Initialize Paystack payment for credits
+  Future<Map<String, dynamic>> initializePayment({
+    required String packageId,
+    String? callbackUrl,
+  }) async {
+    final response = await _dio.post('/payments/initialize', data: {
+      'package_id': packageId,
+      if (callbackUrl != null) 'callback_url': callbackUrl,
+    });
+    return response.data;
+  }
+
+  /// Verify Paystack payment
+  Future<Map<String, dynamic>> verifyPayment(String reference) async {
+    final response = await _dio.post('/payments/verify', data: {
+      'reference': reference,
+    });
+    return response.data;
+  }
+
+  /// Create subscription
   Future<Map<String, dynamic>> createSubscription({
     required String planId,
     String billingCycle = 'monthly',
@@ -283,15 +322,6 @@ class ApiService {
     final response = await _dio.post('/payments/subscribe', data: {
       'plan_id': planId,
       'billing_cycle': billingCycle,
-    });
-    return response.data;
-  }
-
-  Future<Map<String, dynamic>> createPaymentIntent({
-    required String packageId,
-  }) async {
-    final response = await _dio.post('/payments/create-payment-intent', data: {
-      'package_id': packageId,
     });
     return response.data;
   }
