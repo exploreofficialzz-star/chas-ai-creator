@@ -42,7 +42,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _showInterstitialAdIfNeeded() async {
-    await _adService.trackScreenViewAndShowAd();
+    // Track screen view for ad frequency
+    // Show ad every 5 screen views for free users
+    await _adService.showInterstitialAd();
   }
 
   Future<void> _loadData() async {
@@ -66,13 +68,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     await _loadData();
   }
 
-  void _onCreditsEarned(int credits) {
+  void _onCreditsEarned() {
     setState(() {
-      _credits += credits;
+      _credits += 5; // Add 5 credits per ad watch
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('🎉 You earned $credits credits!'),
+        content: const Text('🎉 You earned 5 credits!'),
         backgroundColor: AppTheme.successColor,
       ),
     );
@@ -164,7 +166,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               
                               // Watch Ad for Credits
                               RewardAdButton(
-                                onCreditsEarned: _onCreditsEarned,
+                                onRewardEarned: _onCreditsEarned,
                               ),
                               
                               SizedBox(height: 20.h),
@@ -174,8 +176,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               
                               SizedBox(height: 20.h),
                               
-                              // Banner Ad 2
-                              const BannerAdContainer(adSize: 'medium'),
+                              // Banner Ad 2 - FIXED: changed adSize to isLarge
+                              const BannerAdContainer(isLarge: true),
                               
                               SizedBox(height: 20.h),
                               
