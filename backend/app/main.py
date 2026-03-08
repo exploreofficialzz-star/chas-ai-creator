@@ -160,8 +160,9 @@ async def health_check():
     }
 
 
-# Root endpoint
+# Root endpoint - Supports both GET and HEAD (Render requires HEAD)
 @app.get("/", tags=["Root"])
+@app.head("/", include_in_schema=False)
 async def root():
     """Root endpoint."""
     return {
@@ -239,4 +240,3 @@ if __name__ == "__main__":
         log_level="info",
         access_log=True,
     )
-
