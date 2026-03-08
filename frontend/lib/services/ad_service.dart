@@ -14,7 +14,6 @@ class AdService {
 
   bool _isInitialized = false;
   
-  // Unity Ads Game IDs
   String get gameId {
     if (AppConfig.isAndroid) {
       return AppConfig.unityGameIdAndroid;
@@ -47,7 +46,6 @@ class AdService {
     }
   }
 
-  // Show Rewarded Ad
   Future<bool> showRewardedAd({
     required VoidCallback onRewardEarned,
     required VoidCallback onFailed,
@@ -86,7 +84,6 @@ class AdService {
     }
   }
 
-  // Show Interstitial Ad
   Future<bool> showInterstitialAd() async {
     if (!_isInitialized) {
       await initialize();
@@ -112,12 +109,10 @@ class AdService {
     }
   }
 
-  // Check if ad is ready
   Future<bool> isAdReady(String placementId) async {
     return await UnityAds.isReady(placementId: placementId);
   }
 
-  // Create Banner Ad Widget
   Widget createBannerAd() {
     return UnityBannerAd(
       placementId: bannerAdUnitId,
