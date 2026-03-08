@@ -22,15 +22,21 @@ jobs:
           flutter-version: '3.19.0'
           channel: 'stable'
       
-      - name: Fix Android Project
+      # FIX 1: Create missing asset directories
+      - name: Create Asset Directories
         run: |
-          flutter clean
-          rm -rf android
-          flutter create --platforms=android .
+          mkdir -p assets/images assets/icons assets/animations
+          touch assets/images/.gitkeep
+          touch assets/icons/.gitkeep
+          touch assets/animations/.gitkeep
       
+      # FIX 2: Don't recreate Android project - just clean and fix existing
+      - name: Clean Flutter
+        run: flutter clean
+      
+      # FIX 3: Update Android Config with SDK 34 (not 35) and proper settings
       - name: Update Android Config
         run: |
-          # Update build.gradle with SDK 35 and Kotlin 1.9.0
           cat > android/app/build.gradle << 'EOF'
           plugins {
               id "com.android.application"
@@ -38,42 +44,73 @@ jobs:
               id "dev.flutter.flutter-gradle-plugin"
           }
 
+          def localProperties = new Properties()
+          def localPropertiesFile = rootProject.file('local.properties')
+          if (localPropertiesFile.exists()) {
+              localPropertiesFile.withReader('UTF-8') { reader ->
+                  localProperties.load(reader)
+              }
+          }
+
+          def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+          if (flutterVersionCode == null) {
+              flutterVersionCode = '1'
+          }
+
+          def flutterVersionName = localProperties.getProperty('flutter.versionName')
+          if (flutterVersionName == null) {
+              flutterVersionName = '1.0'
+          }
+
           android {
               namespace "com.chas.aicreator"
-              compileSdkVersion 35
               
+              // FIX: Use SDK 34 (stable) instead of 35
+              compileSdkVersion 34
+              ndkVersion flutter.ndkVersion
+
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_17
                   targetCompatibility JavaVersion.VERSION_17
               }
-              
+
               kotlinOptions {
                   jvmTarget = '17'
               }
-              
+
+              sourceSets {
+                  main.java.srcDirs += 'src/main/kotlin'
+              }
+
               defaultConfig {
                   applicationId "com.chas.aicreator"
                   minSdkVersion 21
-                  targetSdkVersion 35
-                  versionCode 1
-                  versionName "1.0.0"
+                  // FIX: Target SDK 34 to match compileSdk
+                  targetSdkVersion 34
+                  versionCode flutterVersionCode.toInteger()
+                  versionName flutterVersionName
               }
-              
+
               buildTypes {
                   release {
                       signingConfig signingConfigs.debug
-                      minifyEnabled true
-                      shrinkResources true
+                      // FIX: Disable shrinking to avoid resource linking errors
+                      minifyEnabled false
+                      shrinkResources false
                   }
               }
           }
-          
+
           flutter {
               source '../..'
           }
+
+          dependencies {
+              implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.0"
+          }
           EOF
           
-          # Update root build.gradle
+          # FIX 4: Update root build.gradle with compatible versions
           cat > android/build.gradle << 'EOF'
           buildscript {
               ext.kotlin_version = '1.9.0'
@@ -82,24 +119,47 @@ jobs:
                   mavenCentral()
               }
               dependencies {
-                  classpath 'com.android.tools.build:gradle:8.1.0'
+                  // FIX: Use stable AGP version
+                  classpath 'com.android.tools.build:gradle:7.4.2'
                   classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
               }
           }
-          
+
           allprojects {
               repositories {
                   google()
                   mavenCentral()
               }
           }
+
+          rootProject.buildDir = '../build'
+          subprojects {
+              project.buildDir = "${rootProject.buildDir}/${project.name}"
+          }
+          subprojects {
+              project.evaluationDependsOn(':app')
+          }
+
+          tasks.register("clean", Delete) {
+              delete rootProject.buildDir
+          }
+          EOF
+          
+          # FIX 5: Update gradle wrapper to compatible version
+          cat > android/gradle/wrapper/gradle-wrapper.properties << 'EOF'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-7.6.3-all.zip
           EOF
       
       - name: Install dependencies
         run: flutter pub get
       
+      # FIX 6: Build with no-tree-shake-icons to avoid font issues
       - name: Build APK
-        run: flutter build apk --release
+        run: flutter build apk --release --no-tree-shake-icons
       
       - name: Upload APK
         uses: actions/upload-artifact@v4
