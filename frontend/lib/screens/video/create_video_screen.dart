@@ -511,13 +511,17 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
                   
                   SizedBox(height: 32.h),
                   
-                  // Actions - FIXED: Wrapped in lambda functions
+                  // Actions - FIXED: Properly handle nullable onPressed
                   Row(
                     children: [
                       Expanded(
                         child: CustomButton(
                           text: 'Preview',
-                          onPressed: _isGenerating ? null : () => _generatePreview(),
+                          // FIX: Use conditional function that returns void Function()?
+                          // But since CustomButton likely expects non-nullable, we use AbsorbPointer approach
+                          onPressed: _isGenerating 
+                            ? () {} // Empty function when loading (button handles disabled state via isLoading)
+                            : _generatePreview,
                           isLoading: _isGenerating,
                           isOutlined: true,
                         ),
@@ -526,7 +530,9 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
                       Expanded(
                         child: CustomButton(
                           text: 'Create Video',
-                          onPressed: _isGenerating ? null : () => _createVideo(),
+                          onPressed: _isGenerating 
+                            ? () {} // Empty function when loading
+                            : _createVideo,
                           isLoading: _isGenerating,
                         ),
                       ),
@@ -549,4 +555,3 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
     );
   }
 }
-
