@@ -23,20 +23,22 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     
-    # Database - SQLite for local, PostgreSQL for production
-    DATABASE_URL: str = "sqlite:///./app.db"
+    # Database - Supabase PostgreSQL (production)
+    DATABASE_URL: str = "postgresql://postgres:[YOUR-PASSWORD]@db.[YOUR-PROJECT-REF].supabase.co:5432/postgres"
     DATABASE_POOL_SIZE: int = 20
     DATABASE_MAX_OVERFLOW: int = 10
     
-    # Redis (Optional - can disable if not available)
-    REDIS_URL: Optional[str] = "redis://localhost:6379/0"
+    # Supabase
+    SUPABASE_URL: str = "https://[YOUR-PROJECT-REF].supabase.co"
+    SUPABASE_ANON_KEY: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None  # Optional: for admin operations
+    
+    # Redis (Optional - disable if not available)
+    REDIS_URL: Optional[str] = None
     
     # AI Services - HuggingFace (works in Nigeria ✓)
     HUGGINGFACE_API_KEY: Optional[str] = None
     HUGGINGFACE_API_URL: str = "https://api-inference.huggingface.co/models"
-    
-    # REMOVE: OpenAI (blocked in Nigeria)
-    # OPENAI_API_KEY: Optional[str] = None
     
     # AI Model Configuration
     TEXT_MODEL: str = "Qwen/Qwen2-7B-Instruct"
@@ -57,33 +59,12 @@ class Settings(BaseSettings):
     # Payments - Paystack (Nigeria ✓)
     PAYSTACK_SECRET_KEY: str = ""
     PAYSTACK_PUBLIC_KEY: str = ""
-    
-    # REMOVE: Stripe (blocked in Nigeria)
-    # STRIPE_SECRET_KEY: str = ""
-    # STRIPE_PUBLISHABLE_KEY: str = ""
-    # STRIPE_WEBHOOK_SECRET: str = ""
-    # STRIPE_PRICE_ID_FREE: str = ""
-    # STRIPE_PRICE_ID_PRO: str = ""
-    # STRIPE_PRICE_ID_ENTERPRISE: str = ""
+    PAYSTACK_BASE_URL: str = "https://api.paystack.co"
     
     # Storage - Cloudinary (Global ✓)
     CLOUDINARY_CLOUD_NAME: str = ""
     CLOUDINARY_API_KEY: str = ""
     CLOUDINARY_API_SECRET: str = ""
-    
-    # REMOVE: AWS (can use but expensive)
-    # AWS_ACCESS_KEY_ID: str = ""
-    # AWS_SECRET_ACCESS_KEY: str = ""
-    # AWS_REGION: str = "us-east-1"
-    # AWS_S3_BUCKET: str = "ai-creator-videos"
-    # AWS_S3_ENDPOINT: Optional[str] = None
-    
-    # REMOVE: Firebase (restricted in Nigeria)
-    # FIREBASE_PROJECT_ID: str = ""
-    # FIREBASE_PRIVATE_KEY: str = ""
-    # FIREBASE_CLIENT_EMAIL: str = ""
-    # FIREBASE_DATABASE_URL: Optional[str] = None
-    # FIREBASE_STORAGE_BUCKET: Optional[str] = None
     
     # Ads - Unity Ads (Nigeria ✓)
     UNITY_GAME_ID_IOS: str = "6060849"
@@ -91,15 +72,8 @@ class Settings(BaseSettings):
     UNITY_PLACEMENT_ID: str = "rewardedVideo"
     UNITY_ENABLED: bool = True
     
-    # REMOVE: Google AdMob (replaced with Unity Ads)
-    # ADMOB_APP_ID_ANDROID: str = ""
-    # ADMOB_APP_ID_IOS: str = ""
-    # ADMOB_BANNER_AD_UNIT_ID: str = ""
-    # ADMOB_INTERSTITIAL_AD_UNIT_ID: str = ""
-    # ADMOB_REWARDED_AD_UNIT_ID: str = ""
-    
     # Limits - chAs AI Creator Tiers
-    FREE_TIER_DAILY_VIDEOS: int = 2  # Reduced for ads support
+    FREE_TIER_DAILY_VIDEOS: int = 2
     PRO_TIER_DAILY_VIDEOS: int = 20
     ENTERPRISE_TIER_DAILY_VIDEOS: int = 100
     
@@ -109,20 +83,24 @@ class Settings(BaseSettings):
     
     # Ad Configuration
     ADS_ENABLED: bool = True
-    ADS_FREQUENCY_VIDEOS: int = 2  # Show ad every N videos for free users
-    ADS_FREQUENCY_SCREEN_VIEWS: int = 5  # Show ad every N screen views
+    ADS_FREQUENCY_VIDEOS: int = 2
+    ADS_FREQUENCY_SCREEN_VIEWS: int = 5
     
     # Scheduling
     SCHEDULER_ENABLED: bool = True
     MAX_SCHEDULED_VIDEOS_PER_DAY: int = 10
     
     # Security
-    SECRET_KEY: str = "your-random-secret-key-min-32-chars-long"
+    SECRET_KEY: str = "d8f7a9e2b4c6d1f3e5b8a9c0d2e4f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d8"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
     REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 30  # 30 days
     
-    # CORS (Update with your actual frontend URL)
-    CORS_ORIGINS: List[str] = ["https://your-app.onrender.com", "http://localhost:3000"]
+    # CORS (Render + local development)
+    CORS_ORIGINS: List[str] = [
+        "https://chas-ai-creator-2.onrender.com",  # Update with your actual Render URL
+        "http://localhost:3000",
+        "http://localhost:8080"
+    ]
     
     # Logging
     LOG_LEVEL: str = "INFO"
