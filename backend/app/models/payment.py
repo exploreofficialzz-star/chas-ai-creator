@@ -1,4 +1,7 @@
-"""Payment and subscription models for monetization."""
+"""
+Payment and subscription models for monetization - Paystack (Nigeria)
+Created by: chAs
+"""
 
 from datetime import datetime
 from enum import Enum
@@ -24,10 +27,10 @@ from app.db.base import Base
 class PaymentStatus(str, Enum):
     """Payment status options."""
     PENDING = "pending"
-    COMPLETED = "completed"
+    SUCCESS = "success"
     FAILED = "failed"
+    ABANDONED = "abandoned"
     REFUNDED = "refunded"
-    CANCELLED = "cancelled"
 
 
 class PaymentType(str, Enum):
@@ -38,7 +41,7 @@ class PaymentType(str, Enum):
 
 
 class SubscriptionPlan(Base):
-    """Available subscription plans."""
+    """Available subscription plans - Nigeria Friendly."""
     
     __tablename__ = "subscription_plans"
     
@@ -49,14 +52,18 @@ class SubscriptionPlan(Base):
     slug = Column(String(50), unique=True, nullable=False)  # free, pro, enterprise
     description = Column(Text, nullable=True)
     
-    # Pricing
-    price_monthly = Column(Float, nullable=True)  # null for free
-    price_yearly = Column(Float, nullable=True)
-    currency = Column(String(3), default="USD")
+    # Pricing in Naira (₦) - Nigeria
+    price_monthly_ngn = Column(Float, nullable=True)  # Nigerian Naira
+    price_yearly_ngn = Column(Float, nullable=True)
     
-    # Stripe
-    stripe_price_id_monthly = Column(String(100), nullable=True)
-    stripe_price_id_yearly = Column(String(100), nullable=True)
+    # Pricing in USD (for international)
+    price_monthly_usd = Column(Float, nullable=True)
+    price_yearly_usd = Column(Float, nullable=True)
+    
+    currency = Column(String(3), default="NGN")  # Default to Naira
+    
+    # Paystack Plan Code
+    paystack_plan_code = Column(String(100), nullable=True)
     
     # Features
     daily_video_limit = Column(Integer, default=3)
@@ -72,7 +79,7 @@ class SubscriptionPlan(Base):
     has_white_label = Column(Boolean, default=False)
     
     # Additional Features
-    features = Column(JSON, default=list)  # List of feature descriptions
+    features = Column(JSON, default=list)
     
     # Status
     is_active = Column(Boolean, default=True)
@@ -84,7 +91,7 @@ class SubscriptionPlan(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     def __repr__(self) -> str:
-        return f"<SubscriptionPlan(name={self.name}, price={self.price_monthly})>"
+        return f"<SubscriptionPlan(name={self.name}, price={self.price_monthly_ngn})>"
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert plan to dictionary."""
@@ -93,8 +100,10 @@ class SubscriptionPlan(Base):
             "name": self.name,
             "slug": self.slug,
             "description": self.description,
-            "price_monthly": self.price_monthly,
-            "price_yearly": self.price_yearly,
+            "price_monthly_ngn": self.price_monthly_ngn,
+            "price_yearly_ngn": self.price_yearly_ngn,
+            "price_monthly_usd": self.price_monthly_usd,
+            "price_yearly_usd": self.price_yearly_usd,
             "currency": self.currency,
             "daily_video_limit": self.daily_video_limit,
             "max_video_length": self.max_video_length,
@@ -111,7 +120,7 @@ class SubscriptionPlan(Base):
 
 
 class Payment(Base):
-    """Payment transactions."""
+    """Payment transactions - Paystack Integration."""
     
     __tablename__ = "payments"
     
@@ -124,12 +133,16 @@ class Payment(Base):
     
     # Amount
     amount = Column(Float, nullable=False)
-    currency = Column(String(3), default="USD")
+    currency = Column(String(3), default="NGN")  # Nigerian Naira
     
-    # Stripe
-    stripe_payment_intent_id = Column(String(100), nullable=True)
-    stripe_subscription_id = Column(String(100), nullable=True)
-    stripe_invoice_id = Column(String(100), nullable=True)
+    # Paystack
+    paystack_reference = Column(String(100), nullable=True, unique=True)
+    paystack_transaction_id = Column(String(100), nullable=True)
+    paystack_authorization_code = Column(String(100), nullable=True)
+    
+    # Customer Info (for Paystack)
+    customer_email = Column(String(255), nullable=True)
+    customer_code = Column(String(100), nullable=True)
     
     # Description
     description = Column(Text, nullable=True)
@@ -176,7 +189,7 @@ class Payment(Base):
 
 
 class CreditPackage(Base):
-    """Credit packages for purchase."""
+    """Credit packages for purchase - Nigeria Friendly."""
     
     __tablename__ = "credit_packages"
     
@@ -190,12 +203,10 @@ class CreditPackage(Base):
     credits = Column(Integer, nullable=False)
     bonus_credits = Column(Integer, default=0)
     
-    # Pricing
-    price = Column(Float, nullable=False)
-    currency = Column(String(3), default="USD")
-    
-    # Stripe
-    stripe_price_id = Column(String(100), nullable=True)
+    # Pricing in Naira
+    price_ngn = Column(Float, nullable=False)
+    price_usd = Column(Float, nullable=True)
+    currency = Column(String(3), default="NGN")
     
     # Display
     is_popular = Column(Boolean, default=False)
@@ -209,7 +220,7 @@ class CreditPackage(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     def __repr__(self) -> str:
-        return f"<CreditPackage(name={self.name}, credits={self.credits}, price={self.price})>"
+        return f"<CreditPackage(name={self.name}, credits={self.credits}, price={self.price_ngn})>"
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert package to dictionary."""
@@ -220,7 +231,8 @@ class CreditPackage(Base):
             "credits": self.credits,
             "bonus_credits": self.bonus_credits,
             "total_credits": self.credits + self.bonus_credits,
-            "price": self.price,
+            "price_ngn": self.price_ngn,
+            "price_usd": self.price_usd,
             "currency": self.currency,
             "is_popular": self.is_popular,
-  }
+    }
