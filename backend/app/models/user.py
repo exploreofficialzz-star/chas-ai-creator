@@ -1,4 +1,4 @@
-"""User models for authentication and user management."""
+"""User models for authentication and user management - Nigeria Friendly Version."""
 
 from datetime import datetime
 from enum import Enum
@@ -34,7 +34,9 @@ class User(Base):
     
     id = Column(String(36), primary_key=True, index=True)
     email = Column(String(255), unique=True, index=True, nullable=False)
-    firebase_uid = Column(String(128), unique=True, index=True, nullable=True)
+    
+    # Password for JWT auth (Nigeria Friendly - No Firebase needed)
+    password_hash = Column(String(255), nullable=True)
     
     # Profile
     display_name = Column(String(100), nullable=True)
@@ -102,16 +104,16 @@ class User(Base):
 
 
 class UserSubscription(Base):
-    """User subscription details."""
+    """User subscription details - Nigeria Friendly (Paystack)."""
     
     __tablename__ = "user_subscriptions"
     
     id = Column(String(36), primary_key=True, index=True)
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     
-    # Stripe
-    stripe_customer_id = Column(String(100), nullable=True)
-    stripe_subscription_id = Column(String(100), nullable=True)
+    # Paystack (Nigeria Payment Gateway)
+    paystack_customer_code = Column(String(100), nullable=True)
+    paystack_subscription_code = Column(String(100), nullable=True)
     
     # Subscription details
     plan_id = Column(String(50), nullable=False)
@@ -142,7 +144,7 @@ class UserSettings(Base):
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, unique=True)
     
     # Default Niche
-    default_niche = Column(String(50), default="general")  # animals, tech, cooking, motivation, etc.
+    default_niche = Column(String(50), default="general")  # animals, tech, cooking, etc.
     
     # Default Video Settings
     default_video_type = Column(String(20), default="silent")  # silent, narration
@@ -214,4 +216,4 @@ class UserSettings(Base):
             "notify_on_video_complete": self.notify_on_video_complete,
             "notify_on_schedule": self.notify_on_schedule,
             "auto_delete_videos_days": self.auto_delete_videos_days,
-  }
+    }
