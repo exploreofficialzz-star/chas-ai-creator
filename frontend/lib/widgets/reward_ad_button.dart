@@ -42,9 +42,8 @@ class RewardAdButton extends StatelessWidget {
     final adService = AdService();
     
     await adService.showRewardedAd(
-      onRewarded: onRewardEarned,
+      onRewardEarned: onRewardEarned,
       onFailed: () {
-        // Show error or give reward anyway
         debugPrint('Ad failed or was skipped');
       },
     );
