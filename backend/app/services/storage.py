@@ -1,10 +1,12 @@
-"""Cloud storage service for files."""
+"""
+Cloud Storage Service - Cloudinary (Nigeria Friendly)
+Created by: chAs
+"""
 
-import uuid
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
 from typing import Optional
-
-import boto3
-from botocore.config import Config
 
 from app.config import settings
 from app.core.logging import get_logger
@@ -13,70 +15,161 @@ logger = get_logger(__name__)
 
 
 class StorageService:
-    """Service for managing cloud storage."""
+    """Service for managing cloud storage using Cloudinary."""
     
     def __init__(self):
-        self.provider = "aws"  # or "firebase", "gcp"
-        self.bucket = settings.AWS_S3_BUCKET
-        
-        # Initialize S3 client
-        if settings.AWS_ACCESS_KEY_ID:
-            self.s3_client = boto3.client(
-                "s3",
-                aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-                region_name=settings.AWS_REGION,
-                config=Config(
-                    retries={"max_attempts": 3},
-                    connect_timeout=10,
-                    read_timeout=30,
-                ),
-            )
-        else:
-            self.s3_client = None
+        # Configure Cloudinary
+        cloudinary.config(
+            cloud_name=settings.CLOUDINARY_CLOUD_NAME,
+            api_key=settings.CLOUDINARY_API_KEY,
+            api_secret=settings.CLOUDINARY_API_SECRET,
+            secure=True,
+        )
     
     async def upload_file(
         self,
         file_data: bytes,
         filename: Optional[str] = None,
         content_type: str = "application/octet-stream",
+        folder: str = "videos",
     ) -> str:
-        """Upload file to cloud storage."""
+        """Upload file to Cloudinary."""
+        
+        import io
+        import uuid
         
         if not filename:
-            filename = f"uploads/{uuid.uuid4()}"
+            filename = f"{folder}/{uuid.uuid4()}"
+        else:
+            filename = f"{folder}/{filename}"
         
         try:
-            if self.s3_client:
-                # Upload to S3
-                self.s3_client.put_object(
-                    Bucket=self.bucket,
-                    Key=filename,
-                    Body=file_data,
-                    ContentType=content_type,
-                )
-                
-                # Generate URL
-                url = f"https://{self.bucket}.s3.{settings.AWS_REGION}.amazonaws.com/{filename}"
-                
-            else:
-                # Fallback: save locally (development only)
-                import os
-                
-                local_path = f"/tmp/{filename}"
-                os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                
-                with open(local_path, "wb") as f:
-                    f.write(file_data)
-                
-                url = f"file://{local_path}"
+            # Determine resource type based on content
+            resource_type = "auto"
+            if "video" in content_type:
+                resource_type = "video"
+            elif "image" in content_type:
+                resource_type = "image"
             
-            logger.info("File uploaded", filename=filename, size=len(file_data))
+            # Upload to Cloudinary
+            result = cloudinary.uploader.upload(
+                io.BytesIO(file_data),
+                public_id=filename,
+                resource_type=resource_type,
+                overwrite=True,
+            )
+            
+            url = result.get("secure_url")
+            logger.info(f"File uploaded to Cloudinary: {filename}")
             return url
             
         except Exception as e:
-            logger.error("Upload failed", error=str(e), filename=filename)
+            logger.error(f"Cloudinary upload failed: {e}")
             raise
+    
+    async def upload_image(
+        self,
+        image_data: bytes,
+        filename: Optional[str] = None,
+        folder: str = "images",
+        transformation: Optional[dict] = None,
+    ) -> str:
+        """Upload image with optional transformation."""
+        
+        import io
+        import uuid
+        
+        if not filename:
+            filename = f"{folder}/{uuid.uuid4()}"
+        else:
+            filename = f"{folder}/{filename}"
+        
+        try:
+            upload_params = {
+                "public_id": filename,
+                "resource_type": "image",
+                "overwrite": True,
+            }
+            
+            if transformation:
+                upload_params["transformation"] = transformation
+            
+            result = cloudinary.uploader.upload(
+                io.BytesIO(image_data),
+                **upload_params,
+            )
+            
+            url = result.get("secure_url")
+            logger.info(f"Image uploaded to Cloudinary: {filename}")
+            return url
+            
+        except Exception as e:
+            logger.error(f"Cloudinary image upload failed: {e}")
+            raise
+    
+    async def upload_video(
+        self,
+        video_data: bytes,
+        filename: Optional[str] = None,
+        folder: str = "videos",
+    ) -> str:
+        """Upload video to Cloudinary."""
+        
+        import io
+        import uuid
+        
+        if not filename:
+            filename = f"{folder}/{uuid.uuid4()}"
+        else:
+            filename = f"{folder}/{filename}"
+        
+        try:
+            result = cloudinary.uploader.upload(
+                io.BytesIO(video_data),
+                public_id=filename,
+                resource_type="video",
+                overwrite=True,
+            )
+            
+            url = result.get("secure_url")
+            logger.info(f"Video uploaded to Cloudinary: {filename}")
+            return url
+            
+        except Exception as e:
+            logger.error(f"Cloudinary video upload failed: {e}")
+            raise
+    
+    async def delete_file(self, public_id: str) -> bool:
+        """Delete file from Cloudinary."""
+        
+        try:
+            result = cloudinary.uploader.destroy(public_id)
+            logger.info(f"File deleted from Cloudinary: {public_id}")
+            return result.get("result") == "ok"
+            
+        except Exception as e:
+            logger.error(f"Cloudinary delete failed: {e}")
+            return False
+    
+    def get_transformed_url(
+        self,
+        public_id: str,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        crop: Optional[str] = None,
+    ) -> str:
+        """Get transformed image URL."""
+        
+        transformation = {}
+        
+        if width:
+            transformation["width"] = width
+        if height:
+            transformation["height"] = height
+        if crop:
+            transformation["crop"] = crop
+        
+        return cloudinary.CloudinaryImage(public_id).build_url(**transformation)
     
     async def download_file(self, url: str) -> bytes:
         """Download file from URL."""
@@ -87,47 +180,3 @@ class StorageService:
             response = await client.get(url, timeout=60.0)
             response.raise_for_status()
             return response.content
-    
-    async def delete_file(self, url: str) -> bool:
-        """Delete file from storage."""
-        
-        try:
-            if self.s3_client and "s3" in url:
-                # Extract key from URL
-                key = url.split(f"{self.bucket}.s3.")[1].split("/", 1)[1]
-                
-                self.s3_client.delete_object(
-                    Bucket=self.bucket,
-                    Key=key,
-                )
-                
-                logger.info("File deleted", key=key)
-                return True
-                
-        except Exception as e:
-            logger.error("Delete failed", error=str(e), url=url)
-        
-        return False
-    
-    async def get_presigned_url(
-        self,
-        filename: str,
-        expiration: int = 3600,
-    ) -> str:
-        """Generate presigned URL for temporary access."""
-        
-        if self.s3_client:
-            url = self.s3_client.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": self.bucket, "Key": filename},
-                ExpiresIn=expiration,
-            )
-            return url
-        
-        return ""
-    
-    def get_cdn_url(self, filename: str) -> str:
-        """Get CDN URL for file."""
-        
-        # In production, use CloudFront or similar CDN
-        return f"https://{self.bucket}.s3.{settings.AWS_REGION}.amazonaws.com/{filename}"
