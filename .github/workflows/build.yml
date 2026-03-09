@@ -30,28 +30,56 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      - name: Cache Pub dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.pub-cache
-            .dart_tool
-          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-pub-
-
-      - name: Create key.properties for signing
+      - name: Check Android SDK
         run: |
+          echo "ANDROID_HOME: $ANDROID_HOME"
+          ls -la $ANDROID_HOME || echo "ANDROID_HOME not set"
+          ls -la /usr/local/lib/android/sdk 2>/dev/null || echo "Default SDK path not found"
+
+      - name: Flutter doctor
+        run: flutter doctor -v
+
+      - name: Check project structure
+        run: |
+          echo "=== Current directory ==="
+          pwd
+          ls -la
+          echo ""
+          echo "=== Android directory ==="
+          ls -la android/ 2>/dev/null || echo "android directory not found"
+          echo ""
+          echo "=== Gradle wrapper ==="
+          ls -la android/gradle/wrapper/ 2>/dev/null || echo "wrapper not found"
+          echo ""
+          echo "=== Check gradlew ==="
+          file android/gradlew 2>/dev/null || echo "gradlew not found"
+          head -5 android/gradlew 2>/dev/null || echo "cannot read gradlew"
+
+      - name: Create local.properties
+        run: |
+          echo "flutter.sdk=${FLUTTER_ROOT}" > android/local.properties
+          echo "sdk.dir=/usr/local/lib/android/sdk" >> android/local.properties
+          echo "flutter.buildMode=release" >> android/local.properties
+          echo "flutter.versionName=1.0.0" >> android/local.properties
+          echo "flutter.versionCode=1" >> android/local.properties
+          cat android/local.properties
+
+      - name: Setup Gradle wrapper
+        run: |
+          mkdir -p android/gradle/wrapper
+          if [ ! -f android/gradle/wrapper/gradle-wrapper.jar ]; then
+            echo "Downloading gradle-wrapper.jar..."
+            curl -sL -o android/gradle/wrapper/gradle-wrapper.jar \
+              https://github.com/flutter/flutter/raw/3.19.0/packages/flutter_tools/gradle/gradle-wrapper.jar
+            echo "Download complete. File size:"
+            ls -lh android/gradle/wrapper/gradle-wrapper.jar
+          fi
+          chmod +x android/gradlew
+          ls -la android/gradlew
+
+      - name: Create key.properties
+        run: |
+          mkdir -p /home/runner/.android
           echo "storePassword=android" > android/key.properties
           echo "keyPassword=android" >> android/key.properties
           echo "keyAlias=androiddebugkey" >> android/key.properties
@@ -59,50 +87,23 @@ jobs:
 
       - name: Generate debug keystore
         run: |
-          mkdir -p /home/runner/.android
-          keytool -genkey -v -keystore /home/runner/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-
-      - name: Setup Gradle wrapper
-        run: |
-          mkdir -p android/gradle/wrapper
-          curl -sL -o android/gradle/wrapper/gradle-wrapper.jar \
-            https://github.com/flutter/flutter/raw/3.19.0/packages/flutter_tools/gradle/gradle-wrapper.jar
-          chmod +x android/gradlew
-
-      - name: Flutter doctor
-        run: flutter doctor -v
-
-      - name: Clean project
-        run: flutter clean
+          keytool -genkey -v -keystore /home/runner/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" || echo "Keystore may already exist"
 
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Build release APK
-        run: flutter build apk --release
-
-      - name: Find and verify APK
+      - name: Try build with verbose output
         run: |
-          echo "=== Searching for APK files ==="
-          find build -name "*.apk" -type f 2>/dev/null | head -20
-          echo ""
-          echo "=== Directory structure ==="
-          ls -la build/app/outputs/ 2>/dev/null || echo "outputs directory not found"
-          echo ""
-          ls -la build/app/outputs/flutter-apk/ 2>/dev/null || echo "flutter-apk directory not found"
-          echo ""
-          ls -la build/app/outputs/apk/ 2>/dev/null || echo "apk directory not found"
-          echo ""
-          ls -la build/app/outputs/apk/release/ 2>/dev/null || echo "release directory not found"
+          flutter build apk --release --verbose 2>&1 | head -100
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        if: success()
-        with:
-          name: chas-ai-creator-apk
-          path: |
-            build/app/outputs/flutter-apk/app-release.apk
-            build/app/outputs/apk/release/app-release.apk
-            build/app/outputs/**/*.apk
-          if-no-files-found: warn
-          retention-days: 5
+      - name: Check build directory
+        if: failure()
+        run: |
+          echo "=== Build directory contents ==="
+          ls -la build/ 2>/dev/null || echo "build directory not found"
+          echo ""
+          echo "=== App directory ==="
+          ls -la build/app/ 2>/dev/null || echo "app directory not found"
+          echo ""
+          echo "=== Find any APK ==="
+          find . -name "*.apk" 2>/dev/null || echo "No APK found"
