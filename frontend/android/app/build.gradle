@@ -6,25 +6,20 @@ plugins {
 
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
+
 if (localPropertiesFile.exists()) {
     localPropertiesFile.withReader('UTF-8') { reader ->
         localProperties.load(reader)
     }
 }
 
-def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
-if (flutterVersionCode == null) {
-    flutterVersionCode = '1'
-}
-
-def flutterVersionName = localProperties.getProperty('flutter.versionName')
-if (flutterVersionName == null) {
-    flutterVersionName = '1.0'
-}
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode') ?: '1'
+def flutterVersionName = localProperties.getProperty('flutter.versionName') ?: '1.0'
 
 android {
+
     namespace "com.chas.aicreator"
-    // FIX: Use SDK 33 (more stable with AGP 7.4.2)
+
     compileSdkVersion 33
     ndkVersion flutter.ndkVersion
 
@@ -42,21 +37,24 @@ android {
     }
 
     defaultConfig {
+
         applicationId "com.chas.aicreator"
+
         minSdkVersion 21
         targetSdkVersion 33
+
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
     }
 
     buildTypes {
         release {
+
             signingConfig signingConfigs.debug
-            // FIX: Explicitly disable all shrinking
+
+            // Disable shrinking
             minifyEnabled false
             shrinkResources false
-            // FIX: Disable R8 completely
-            useProguard false
         }
     }
 }
@@ -66,5 +64,8 @@ flutter {
 }
 
 dependencies {
-    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.7.21"
+
+    // FIX: Match Kotlin plugin version
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.24"
+
 }
