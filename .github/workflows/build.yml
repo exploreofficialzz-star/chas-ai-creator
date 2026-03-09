@@ -2,7 +2,7 @@ name: Build Flutter APK
 
 on:
   push:
-   branches: [ main ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -50,16 +50,13 @@ jobs:
       - name: Recreate Android folder
         run: flutter create --platforms=android --no-pub .
 
-      # Fix Kotlin version
-      - name: Upgrade Kotlin
+      - name: Upgrade Kotlin version
         run: |
           sed -i "s/ext.kotlin_version = '.*'/ext.kotlin_version = '1.9.22'/g" android/build.gradle || true
 
-      # Enable MultiDex (needed because your app has many plugins)
       - name: Enable MultiDex
         run: |
           sed -i '/defaultConfig {/a\        multiDexEnabled true' android/app/build.gradle
-          sed -i '/dependencies {/a\    implementation "androidx.multidex:multidex:2.0.1"' android/app/build.gradle
 
       - name: Install dependencies
         run: flutter pub get
