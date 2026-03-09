@@ -6,7 +6,6 @@ import '../../config/theme.dart';
 import '../../providers/auth_bloc.dart';
 import '../../widgets/custom_button.dart';
 import '../../widgets/custom_text_field.dart';
-import '../../widgets/social_button.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -63,160 +62,278 @@ class _LoginScreenState extends State<LoginScreen> {
           if (state is AuthError) {
             setState(() => _isLoading = false);
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(state.message)),
+              SnackBar(
+                content: Text(state.message),
+                backgroundColor: Colors.red.shade700,
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12.r),
+                ),
+                margin: EdgeInsets.all(16.w),
+                duration: const Duration(seconds: 4),
+              ),
             );
+          } else if (state is AuthAuthenticated) {
+            setState(() => _isLoading = false);
           }
         },
         child: SafeArea(
-          child: SingleChildScrollView(
-            padding: EdgeInsets.all(24.w),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SizedBox(height: 40.h),
-                
-                // Logo
-                Container(
-                  width: 100.w,
-                  height: 100.w,
-                  decoration: BoxDecoration(
-                    gradient: AppTheme.primaryGradient,
-                    borderRadius: BorderRadius.circular(24.r),
-                  ),
-                  child: Icon(
-                    Icons.videocam,
-                    size: 48.w,
-                    color: Colors.white,
-                  ),
-                ),
-                
-                SizedBox(height: 32.h),
-                
-                // Title
-                Text(
-                  _isLogin ? 'Welcome Back!' : 'Create Account',
-                  style: Theme.of(context).textTheme.headlineMedium,
-                  textAlign: TextAlign.center,
-                ),
-                
-                SizedBox(height: 8.h),
-                
-                Text(
-                  _isLogin
-                      ? 'Sign in to continue creating amazing videos'
-                      : 'Start your AI video creation journey',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: AppTheme.textSecondaryLight,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                
-                SizedBox(height: 40.h),
-                
-                // Form
-                Form(
-                  key: _formKey,
+          child: Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.symmetric(horizontal: 28.w),
                   child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      CustomTextField(
-                        controller: _emailController,
-                        label: 'Email',
-                        hint: 'Enter your email',
-                        keyboardType: TextInputType.emailAddress,
-                        prefixIcon: Icons.email_outlined,
-                        validator: (value) {
-                          if (value?.isEmpty ?? true) {
-                            return 'Please enter your email';
-                          }
-                          if (!value!.contains('@')) {
-                            return 'Please enter a valid email';
-                          }
-                          return null;
-                        },
+                      SizedBox(height: 50.h),
+                      
+                      // Animated Logo Container
+                      Container(
+                        width: 110.w,
+                        height: 110.w,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              AppTheme.primaryColor,
+                              AppTheme.primaryColor.withOpacity(0.8),
+                              Color(0xFF8B5CF6),
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(28.r),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppTheme.primaryColor.withOpacity(0.3),
+                              blurRadius: 20,
+                              offset: Offset(0, 10),
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          Icons.auto_fix_high_rounded,
+                          size: 52.w,
+                          color: Colors.white,
+                        ),
                       ),
                       
-                      SizedBox(height: 16.h),
+                      SizedBox(height: 32.h),
                       
-                      CustomTextField(
-                        controller: _passwordController,
-                        label: 'Password',
-                        hint: 'Enter your password',
-                        obscureText: true,
-                        prefixIcon: Icons.lock_outlined,
-                        validator: (value) {
-                          if (value?.isEmpty ?? true) {
-                            return 'Please enter your password';
-                          }
-                          if (value!.length < 6) {
-                            return 'Password must be at least 6 characters';
-                          }
-                          return null;
-                        },
+                      // App Name
+                      Text(
+                        'chAs AI Creator',
+                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
                       ),
+                      
+                      SizedBox(height: 8.h),
+                      
+                      // Title
+                      Text(
+                        _isLogin ? 'Welcome Back!' : 'Create Account',
+                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                          fontSize: 28.sp,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      
+                      SizedBox(height: 8.h),
+                      
+                      // Subtitle
+                      Text(
+                        _isLogin
+                            ? 'Sign in to continue creating amazing AI videos'
+                            : 'Start your journey to viral video content',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Colors.white.withOpacity(0.7),
+                          fontSize: 14.sp,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      
+                      SizedBox(height: 40.h),
+                      
+                      // Form Container
+                      Container(
+                        padding: EdgeInsets.all(24.w),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(20.r),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.1),
+                          ),
+                        ),
+                        child: Form(
+                          key: _formKey,
+                          child: Column(
+                            children: [
+                              CustomTextField(
+                                controller: _emailController,
+                                label: 'Email Address',
+                                hint: 'name@example.com',
+                                keyboardType: TextInputType.emailAddress,
+                                prefixIcon: Icons.email_outlined,
+                                validator: (value) {
+                                  if (value?.isEmpty ?? true) {
+                                    return 'Please enter your email';
+                                  }
+                                  if (!value!.contains('@') || !value.contains('.')) {
+                                    return 'Please enter a valid email';
+                                  }
+                                  return null;
+                                },
+                              ),
+                              
+                              SizedBox(height: 20.h),
+                              
+                              CustomTextField(
+                                controller: _passwordController,
+                                label: 'Password',
+                                hint: _isLogin ? 'Your password' : 'Min 8 characters',
+                                obscureText: true,
+                                prefixIcon: Icons.lock_outline_rounded,
+                                validator: (value) {
+                                  if (value?.isEmpty ?? true) {
+                                    return 'Please enter your password';
+                                  }
+                                  if (!_isLogin && value!.length < 8) {
+                                    return 'Password must be at least 8 characters';
+                                  }
+                                  if (_isLogin && value!.length < 6) {
+                                    return 'Password too short';
+                                  }
+                                  return null;
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      
+                      SizedBox(height: 24.h),
+                      
+                      // Submit Button
+                      CustomButton(
+                        text: _isLogin ? 'Sign In' : 'Create Account',
+                        onPressed: _submit,
+                        isLoading: _isLoading,
+                      ),
+                      
+                      SizedBox(height: 20.h),
+                      
+                      // Toggle Mode
+                      TextButton(
+                        onPressed: _toggleMode,
+                        style: TextButton.styleFrom(
+                          padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 8.h),
+                        ),
+                        child: RichText(
+                          text: TextSpan(
+                            text: _isLogin
+                                ? "Don't have an account? "
+                                : "Already have an account? ",
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 14.sp,
+                            ),
+                            children: [
+                              TextSpan(
+                                text: _isLogin ? 'Sign Up' : 'Sign In',
+                                style: TextStyle(
+                                  color: AppTheme.primaryColor,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14.sp,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      
+                      SizedBox(height: 30.h),
                     ],
                   ),
                 ),
-                
-                SizedBox(height: 24.h),
-                
-                // Submit Button
-                CustomButton(
-                  text: _isLogin ? 'Sign In' : 'Create Account',
-                  onPressed: _submit,
-                  isLoading: _isLoading,
-                ),
-                
-                SizedBox(height: 16.h),
-                
-                // Toggle Mode
-                TextButton(
-                  onPressed: _toggleMode,
-                  child: Text(
-                    _isLogin
-                        ? "Don't have an account? Sign Up"
-                        : 'Already have an account? Sign In',
+              ),
+              
+              // Footer - Made with love
+              Container(
+                padding: EdgeInsets.symmetric(vertical: 20.h),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withOpacity(0.3),
+                    ],
                   ),
                 ),
-                
-                SizedBox(height: 24.h),
-                
-                // Divider
-                Row(
+                child: Column(
                   children: [
-                    Expanded(child: Divider()),
-                    Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 16.w),
-                      child: Text(
-                        'OR',
-                        style: Theme.of(context).textTheme.bodySmall,
+                    // Divider
+                    Container(
+                      margin: EdgeInsets.symmetric(horizontal: 40.w),
+                      height: 1,
+                      color: Colors.white.withOpacity(0.1),
+                    ),
+                    
+                    SizedBox(height: 16.h),
+                    
+                    // Made with love
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          'Made with ',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 12.sp,
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
+                        Icon(
+                          Icons.favorite,
+                          color: Colors.red.shade400,
+                          size: 14.sp,
+                        ),
+                        Text(
+                          ' by ',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 12.sp,
+                          ),
+                        ),
+                        Text(
+                          'chAs tech group',
+                          style: TextStyle(
+                            color: AppTheme.primaryColor,
+                            fontSize: 12.sp,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    
+                    SizedBox(height: 4.h),
+                    
+                    // Copyright
+                    Text(
+                      '© 2024 All rights reserved',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.4),
+                        fontSize: 10.sp,
                       ),
                     ),
-                    Expanded(child: Divider()),
                   ],
                 ),
-                
-                SizedBox(height: 24.h),
-                
-                // Social Login
-                SocialButton(
-                  text: 'Continue with Google',
-                  icon: 'assets/icons/google.svg',
-                  onPressed: () {
-                    context.read<AuthBloc>().add(LoginWithGoogle());
-                  },
-                ),
-                
-                SizedBox(height: 12.h),
-                
-                SocialButton(
-                  text: 'Continue with Apple',
-                  icon: 'assets/icons/apple.svg',
-                  onPressed: () {
-                    context.read<AuthBloc>().add(LoginWithApple());
-                  },
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
