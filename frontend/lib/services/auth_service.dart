@@ -19,8 +19,10 @@ class AuthService {
   factory AuthService() => _instance;
   AuthService._internal();
 
-  // API Base URL - Change this for production
-  static const String baseUrl = 'http://localhost:8000/api/v1';
+  // API Base URL - Production (Render)
+  // Your deployed backend URL
+  static const String baseUrl = 'https://chas-ai-creator-2.onrender.com/api/v1';
+  // For local development: 'http://localhost:8000/api/v1'
   
   // Token storage keys
   static const String _accessTokenKey = 'access_token';
@@ -364,3 +366,4 @@ class AuthService {
     };
   }
 }
+
