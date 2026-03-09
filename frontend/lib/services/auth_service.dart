@@ -6,6 +6,7 @@
  */
 
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -94,74 +95,133 @@ class AuthService {
     return null;
   }
 
-/// Register with email and password
-Future<User> registerWithEmail(
-  String email,
-  String password, {
-  String? displayName,
-}) async {
-  try {
-    print('🔵 Sending registration request to: $baseUrl/auth/register');
-    print('🔵 Email: $email');
-    
-    final response = await http.post(
-      Uri.parse('$baseUrl/auth/register'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
+  /// Register with email and password
+  Future<User> registerWithEmail(
+    String email,
+    String password, {
+    String? displayName,
+  }) async {
+    try {
+      developer.log('🔵 REGISTER: Starting registration', name: 'AuthService');
+      developer.log('🔵 REGISTER: URL: $baseUrl/auth/register', name: 'AuthService');
+      developer.log('🔵 REGISTER: Email: $email', name: 'AuthService');
+      developer.log('🔵 REGISTER: Password length: ${password.length}', name: 'AuthService');
+      
+      // Validate password length before sending
+      if (password.length < 8) {
+        throw Exception('Password must be at least 8 characters');
+      }
+      
+      final requestBody = {
         'email': email,
         'password': password,
         'display_name': displayName,
-      }),
-    );
+      };
+      
+      developer.log('🔵 REGISTER: Request body: ${jsonEncode(requestBody)}', name: 'AuthService');
 
-    print('🟢 Response status: ${response.statusCode}');
-    print('🟢 Response body: ${response.body}');
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/register'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode(requestBody),
+      ).timeout(const Duration(seconds: 30));
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      
-      // Save tokens
-      await _saveTokens(
-        data['access_token'],
-        data['refresh_token'],
-      );
-      
-      // Create user object
-      final user = User(
-        id: data['user']['id'],
-        email: data['user']['email'],
-        displayName: data['user']['display_name'],
-        subscriptionTier: data['user']['subscription_tier'],
-        credits: data['user']['credits'],
-      );
-      
-      await _saveUser(user);
-      
-      return user;
-    } else {
-      final error = jsonDecode(response.body);
-      final errorMsg = error['error'] ?? error['detail'] ?? 'Registration failed';
-      print('🔴 Server error: $errorMsg');
-      throw Exception(errorMsg);
+      developer.log('🟢 REGISTER: Response status: ${response.statusCode}', name: 'AuthService');
+      developer.log('🟢 REGISTER: Response body: ${response.body}', name: 'AuthService');
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        
+        // Validate response has required fields
+        if (data['access_token'] == null || data['refresh_token'] == null) {
+          throw Exception('Invalid server response: missing tokens');
+        }
+        
+        if (data['user'] == null) {
+          throw Exception('Invalid server response: missing user data');
+        }
+        
+        // Save tokens
+        await _saveTokens(
+          data['access_token'],
+          data['refresh_token'],
+        );
+        
+        // Create user object
+        final user = User(
+          id: data['user']['id'] ?? '',
+          email: data['user']['email'] ?? email,
+          displayName: data['user']['display_name'],
+          subscriptionTier: data['user']['subscription_tier'] ?? 'free',
+          credits: data['user']['credits'] ?? 0,
+        );
+        
+        await _saveUser(user);
+        
+        developer.log('✅ REGISTER: Success! User: ${user.email}', name: 'AuthService');
+        
+        return user;
+      } else if (response.statusCode == 400) {
+        // Bad request - validation error
+        final error = jsonDecode(response.body);
+        final errorMsg = error['error'] ?? error['detail'] ?? error['message'] ?? 'Invalid request';
+        developer.log('🔴 REGISTER: 400 Error: $errorMsg', name: 'AuthService');
+        throw Exception(errorMsg);
+      } else if (response.statusCode == 409) {
+        // Conflict - email already exists
+        developer.log('🔴 REGISTER: 409 - Email already exists', name: 'AuthService');
+        throw Exception('Email already registered. Please sign in instead.');
+      } else if (response.statusCode == 422) {
+        // Validation error
+        final error = jsonDecode(response.body);
+        final errorMsg = error['error'] ?? error['detail'] ?? 'Validation failed';
+        developer.log('🔴 REGISTER: 422 Error: $errorMsg', name: 'AuthService');
+        throw Exception(errorMsg);
+      } else if (response.statusCode >= 500) {
+        // Server error
+        developer.log('🔴 REGISTER: Server error ${response.statusCode}', name: 'AuthService');
+        throw Exception('Server error. Please try again later.');
+      } else {
+        // Other errors
+        final error = jsonDecode(response.body);
+        final errorMsg = error['error'] ?? error['detail'] ?? 'Registration failed (Code: ${response.statusCode})';
+        developer.log('🔴 REGISTER: Error ${response.statusCode}: $errorMsg', name: 'AuthService');
+        throw Exception(errorMsg);
+      }
+    } on FormatException catch (e) {
+      developer.log('🔴 REGISTER: JSON parsing error: $e', name: 'AuthService');
+      throw Exception('Invalid server response. Please try again.');
+    } on http.ClientException catch (e) {
+      developer.log('🔴 REGISTER: Network error: $e', name: 'AuthService');
+      throw Exception('Network error. Check your internet connection.');
+    } catch (e) {
+      developer.log('🔴 REGISTER: Unexpected error: $e', name: 'AuthService');
+      throw Exception('Registration failed: $e');
     }
-  } catch (e) {
-    print('🔴 Registration exception: $e');
-    throw Exception('Registration failed: $e');
   }
-}
-
 
   /// Sign in with email and password
   Future<User> signInWithEmail(String email, String password) async {
     try {
+      developer.log('🔵 LOGIN: Starting login', name: 'AuthService');
+      developer.log('🔵 LOGIN: URL: $baseUrl/auth/login', name: 'AuthService');
+
       final response = await http.post(
         Uri.parse('$baseUrl/auth/login'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
         body: jsonEncode({
           'email': email,
           'password': password,
         }),
-      );
+      ).timeout(const Duration(seconds: 30));
+
+      developer.log('🟢 LOGIN: Response status: ${response.statusCode}', name: 'AuthService');
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -183,12 +243,17 @@ Future<User> registerWithEmail(
         
         await _saveUser(user);
         
+        developer.log('✅ LOGIN: Success!', name: 'AuthService');
+        
         return user;
+      } else if (response.statusCode == 401) {
+        throw Exception('Invalid email or password');
       } else {
         final error = jsonDecode(response.body);
-        throw Exception(error['detail'] ?? 'Login failed');
+        throw Exception(error['error'] ?? error['detail'] ?? 'Login failed');
       }
     } catch (e) {
+      developer.log('🔴 LOGIN: Error: $e', name: 'AuthService');
       throw Exception('Login failed: $e');
     }
   }
@@ -196,12 +261,17 @@ Future<User> registerWithEmail(
   /// Sign in with Google - WORKING IMPLEMENTATION
   Future<User> signInWithGoogle() async {
     try {
+      developer.log('🔵 GOOGLE: Starting Google Sign-In', name: 'AuthService');
+      
       // Trigger Google Sign-In flow
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
       
       if (googleUser == null) {
+        developer.log('🟡 GOOGLE: User cancelled', name: 'AuthService');
         throw Exception('Google Sign-In cancelled by user');
       }
+
+      developer.log('🔵 GOOGLE: Got user: ${googleUser.email}', name: 'AuthService');
 
       // Get authentication details
       final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
@@ -211,8 +281,11 @@ Future<User> registerWithEmail(
       final String? accessToken = googleAuth.accessToken;
       
       if (idToken == null) {
+        developer.log('🔴 GOOGLE: No ID token received', name: 'AuthService');
         throw Exception('Failed to get Google ID token');
       }
+
+      developer.log('🔵 GOOGLE: Sending to backend...', name: 'AuthService');
 
       // Send to your backend for verification and JWT token generation
       final response = await http.post(
@@ -224,7 +297,9 @@ Future<User> registerWithEmail(
           'email': googleUser.email,
           'display_name': googleUser.displayName,
         }),
-      );
+      ).timeout(const Duration(seconds: 30));
+
+      developer.log('🟢 GOOGLE: Response status: ${response.statusCode}', name: 'AuthService');
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -246,12 +321,15 @@ Future<User> registerWithEmail(
         
         await _saveUser(user);
         
+        developer.log('✅ GOOGLE: Success!', name: 'AuthService');
+        
         return user;
       } else {
         final error = jsonDecode(response.body);
-        throw Exception(error['detail'] ?? 'Google login failed');
+        throw Exception(error['error'] ?? error['detail'] ?? 'Google login failed');
       }
     } catch (e) {
+      developer.log('🔴 GOOGLE: Error: $e', name: 'AuthService');
       // Sign out from Google if backend auth fails
       await _googleSignIn.signOut();
       throw Exception('Google Sign-In failed: $e');
@@ -260,8 +338,6 @@ Future<User> registerWithEmail(
 
   /// Sign in with Apple - PLACEHOLDER (requires iOS setup)
   Future<User> signInWithApple() async {
-    // Apple Sign-In requires iOS developer account and specific setup
-    // For now, show message to use Google or email
     throw Exception('Apple Sign-In coming soon. Please use Google or Email login.');
   }
 
@@ -307,7 +383,7 @@ Future<User> registerWithEmail(
         return user;
       } else {
         final error = jsonDecode(response.body);
-        throw Exception(error['detail'] ?? 'Social login failed');
+        throw Exception(error['error'] ?? error['detail'] ?? 'Social login failed');
       }
     } catch (e) {
       throw Exception('Social login failed: $e');
@@ -337,7 +413,7 @@ Future<User> registerWithEmail(
 
       if (response.statusCode != 200) {
         final error = jsonDecode(response.body);
-        throw Exception(error['detail'] ?? 'Password reset failed');
+        throw Exception(error['error'] ?? error['detail'] ?? 'Password reset failed');
       }
     } catch (e) {
       throw Exception('Password reset failed: $e');
@@ -363,7 +439,7 @@ Future<User> registerWithEmail(
 
       if (response.statusCode != 200) {
         final error = jsonDecode(response.body);
-        throw Exception(error['detail'] ?? 'Password change failed');
+        throw Exception(error['error'] ?? error['detail'] ?? 'Password change failed');
       }
     } catch (e) {
       throw Exception('Password change failed: $e');
@@ -397,7 +473,7 @@ Future<User> registerWithEmail(
         return user;
       } else {
         final error = jsonDecode(response.body);
-        throw Exception(error['detail'] ?? 'Profile update failed');
+        throw Exception(error['error'] ?? error['detail'] ?? 'Profile update failed');
       }
     } catch (e) {
       throw Exception('Profile update failed: $e');
