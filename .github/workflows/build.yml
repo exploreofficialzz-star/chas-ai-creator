@@ -26,7 +26,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.0'
+          flutter-version: 3.19.0
           channel: stable
           cache: true
 
@@ -36,7 +36,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('frontend/android/gradle/wrapper/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
 
@@ -45,10 +45,25 @@ jobs:
         with:
           path: |
             ~/.pub-cache
-            ${{ github.workspace }}/frontend/.dart_tool
-          key: ${{ runner.os }}-pub-${{ hashFiles('frontend/pubspec.lock') }}
+            .dart_tool
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock') }}
           restore-keys: |
             ${{ runner.os }}-pub-
+
+      - name: Create key.properties for signing
+        run: |
+          echo "storePassword=android" > android/key.properties
+          echo "keyPassword=android" >> android/key.properties
+          echo "keyAlias=androiddebugkey" >> android/key.properties
+          echo "storeFile=/home/runner/.android/debug.keystore" >> android/key.properties
+
+      - name: Generate debug keystore
+        run: |
+          mkdir -p /home/runner/.android
+          keytool -genkey -v -keystore /home/runner/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
 
       - name: Flutter doctor
         run: flutter doctor -v
@@ -60,12 +75,18 @@ jobs:
         run: flutter pub get
 
       - name: Build release APK
-        run: flutter build apk --release --verbose
+        run: flutter build apk --release
+
+      - name: List build outputs
+        if: failure()
+        run: |
+          ls -la build/app/outputs/flutter-apk/ || true
+          ls -la build/app/outputs/ || true
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         if: success()
         with:
           name: chas-ai-creator-apk
-          path: frontend/build/app/outputs/flutter-apk/app-release.apk
+          path: build/app/outputs/flutter-apk/app-release.apk
           retention-days: 5
