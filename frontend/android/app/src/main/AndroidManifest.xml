@@ -1,14 +1,30 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.chasaicreator.app">
     
+    <!-- Internet -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    
+    <!-- Storage -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+    
+    <!-- Camera -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    
+    <!-- Notifications -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
     
     <application
         android:label="ChAs AI Creator"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="true">
         
         <activity
@@ -30,14 +46,31 @@
             </intent-filter>
         </activity>
         
+        <!-- Flutter -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2"/>
             
-        <!-- Unity Ads Game ID (replace with your actual ID) -->
+        <!-- Unity Ads Game ID - REPLACE WITH YOUR ACTUAL ID -->
         <meta-data
             android:name="com.unity3d.ads.gameId"
-            android:value="YOUR_UNITY_GAME_ID"/>
+            android:value="6060848"/>
             
+        <!-- Paystack -->
+        <activity 
+            android:name="com.paystack.android.PaystackActivity"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar"/>
+            
+        <!-- Notifications -->
+        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver" />
+        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />
+        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
