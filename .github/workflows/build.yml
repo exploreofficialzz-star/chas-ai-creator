@@ -7,14 +7,14 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     defaults:
       run:
         working-directory: ./frontend
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Java
@@ -30,28 +30,32 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Flutter Doctor
+      - name: Cache Flutter packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-flutter-${{ hashFiles('frontend/pubspec.lock') }}
+
+      - name: Flutter doctor
         run: flutter doctor -v
 
-      # Clean previous builds
-      - name: Clean Project
+      - name: Clean project
         run: |
           flutter clean
           rm -rf android
 
-      # Recreate Android folder (without downloading dependencies)
-      - name: Recreate Android Project
+      - name: Recreate Android folder
         run: flutter create --platforms=android --no-pub .
 
-      # Install Dart dependencies
-      - name: Install Dependencies
+      - name: Install dependencies
         run: flutter pub get
 
-      # Build APK
-      - name: Build Release APK
+      - name: Build release APK
         run: flutter build apk --release --no-tree-shake-icons --no-shrink
 
-      # Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
