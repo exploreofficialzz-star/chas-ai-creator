@@ -81,16 +81,28 @@ jobs:
       - name: Build release APK
         run: flutter build apk --release
 
-      - name: List build outputs
-        if: failure()
+      - name: Find and verify APK
         run: |
-          ls -la build/app/outputs/flutter-apk/ || true
-          ls -la build/app/outputs/ || true
+          echo "=== Searching for APK files ==="
+          find build -name "*.apk" -type f 2>/dev/null | head -20
+          echo ""
+          echo "=== Directory structure ==="
+          ls -la build/app/outputs/ 2>/dev/null || echo "outputs directory not found"
+          echo ""
+          ls -la build/app/outputs/flutter-apk/ 2>/dev/null || echo "flutter-apk directory not found"
+          echo ""
+          ls -la build/app/outputs/apk/ 2>/dev/null || echo "apk directory not found"
+          echo ""
+          ls -la build/app/outputs/apk/release/ 2>/dev/null || echo "release directory not found"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         if: success()
         with:
           name: chas-ai-creator-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/apk/release/app-release.apk
+            build/app/outputs/**/*.apk
+          if-no-files-found: warn
           retention-days: 5
