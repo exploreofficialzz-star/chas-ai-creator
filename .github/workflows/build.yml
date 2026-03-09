@@ -17,39 +17,36 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.0'
+          flutter-version: 3.19.0
           channel: stable
+          cache: true
 
       - name: Flutter Doctor
-        run: flutter doctor
+        run: flutter doctor -v
 
-      - name: Clean Flutter
-        run: flutter clean
+      - name: Clean Project
+        run: |
+          flutter clean
+          rm -rf android
 
       - name: Recreate Android Project
         run: |
-          rm -rf android
-          flutter config --enable-android
           flutter create --platforms=android .
 
-      # FIXED SETTINGS.GRADLE
+      # SETTINGS.GRADLE
       - name: Fix settings.gradle
         run: |
           cat > android/settings.gradle << 'EOF'
           pluginManagement {
-              def flutterSdkPath = {
-                  def properties = new Properties()
-                  file("local.properties").withInputStream { properties.load(it) }
-                  def flutterSdkPath = properties.getProperty("flutter.sdk")
-                  assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
-                  return flutterSdkPath
-              }()
-
-              includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
-
               repositories {
                   google()
                   mavenCentral()
@@ -59,118 +56,14 @@ jobs:
 
           plugins {
               id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-              id "com.android.application" version "7.4.2" apply false
+              id "com.android.application" version "8.2.2" apply false
               id "org.jetbrains.kotlin.android" version "1.9.24" apply false
           }
 
           include ":app"
           EOF
 
-      # FIXED MANIFEST
-      - name: Fix AndroidManifest.xml
-        run: |
-          cat > android/app/src/main/AndroidManifest.xml << 'EOF'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <application
-                  android:label="chas_ai_creator"
-                  android:name="${applicationName}"
-                  android:icon="@mipmap/ic_launcher">
-
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true"
-                      android:launchMode="singleTop"
-                      android:theme="@style/LaunchTheme"
-                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-                      android:hardwareAccelerated="true"
-                      android:windowSoftInputMode="adjustResize">
-
-                      <meta-data
-                        android:name="io.flutter.embedding.android.NormalTheme"
-                        android:resource="@style/NormalTheme"/>
-
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN"/>
-                          <category android:name="android.intent.category.LAUNCHER"/>
-                      </intent-filter>
-
-                  </activity>
-
-                  <meta-data
-                      android:name="flutterEmbedding"
-                      android:value="2"/>
-
-              </application>
-
-              <queries>
-                  <intent>
-                      <action android:name="android.intent.action.PROCESS_TEXT"/>
-                      <data android:mimeType="text/plain"/>
-                  </intent>
-              </queries>
-
-          </manifest>
-          EOF
-
-      # FIX MAIN ACTIVITY
-      - name: Fix MainActivity.kt
-        run: |
-          mkdir -p android/app/src/main/kotlin/com/chas/aicreator
-          cat > android/app/src/main/kotlin/com/chas/aicreator/MainActivity.kt << 'EOF'
-          package com.chas.aicreator
-
-          import io.flutter.embedding.android.FlutterActivity
-
-          class MainActivity: FlutterActivity()
-          EOF
-
-      # FIX APP BUILD.GRADLE
-      - name: Fix app/build.gradle
-        run: |
-          cat > android/app/build.gradle << 'EOF'
-          plugins {
-              id "com.android.application"
-              id "kotlin-android"
-              id "dev.flutter.flutter-gradle-plugin"
-          }
-
-          android {
-              namespace "com.chas.aicreator"
-              compileSdkVersion 34
-              ndkVersion flutter.ndkVersion
-
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_17
-                  targetCompatibility JavaVersion.VERSION_17
-              }
-
-              kotlinOptions {
-                  jvmTarget = '17'
-              }
-
-              defaultConfig {
-                  applicationId "com.chas.aicreator"
-                  minSdkVersion 21
-                  targetSdkVersion 34
-                  versionCode 1
-                  versionName "1.0.0"
-              }
-
-              buildTypes {
-                  release {
-                      signingConfig signingConfigs.debug
-                      minifyEnabled false
-                      shrinkResources false
-                  }
-              }
-          }
-
-          flutter {
-              source '../..'
-          }
-          EOF
-
-      # FIX ROOT BUILD.GRADLE
+      # ROOT BUILD.GRADLE
       - name: Fix root build.gradle
         run: |
           cat > android/build.gradle << 'EOF'
@@ -187,17 +80,69 @@ jobs:
               project.buildDir = "${rootProject.buildDir}/${project.name}"
           }
 
-          subprojects {
-              project.evaluationDependsOn(':app')
-          }
-
           tasks.register("clean", Delete) {
               delete rootProject.buildDir
           }
           EOF
 
-      # FIX GRADLE WRAPPER
-      - name: Fix gradle wrapper
+      # APP BUILD.GRADLE
+      - name: Fix app/build.gradle
+        run: |
+          cat > android/app/build.gradle << 'EOF'
+          plugins {
+              id "com.android.application"
+              id "org.jetbrains.kotlin.android"
+              id "dev.flutter.flutter-gradle-plugin"
+          }
+
+          android {
+              namespace "com.chas.aicreator"
+              compileSdk 34
+
+              defaultConfig {
+                  applicationId "com.chas.aicreator"
+                  minSdk 21
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                      shrinkResources false
+                      signingConfig signingConfigs.debug
+                  }
+              }
+          }
+
+          flutter {
+              source '../..'
+          }
+          EOF
+
+      # GRADLE PROPERTIES (VERY IMPORTANT)
+      - name: Fix gradle.properties
+        run: |
+          cat > android/gradle.properties << 'EOF'
+          org.gradle.jvmargs=-Xmx4096m
+          android.useAndroidX=true
+          android.enableJetifier=true
+          android.enableR8=false
+          kotlin.incremental=false
+          EOF
+
+      # GRADLE WRAPPER
+      - name: Fix Gradle Wrapper
         run: |
           mkdir -p android/gradle/wrapper
           cat > android/gradle/wrapper/gradle-wrapper.properties << 'EOF'
@@ -205,17 +150,60 @@ jobs:
           distributionPath=wrapper/dists
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-7.6.3-all.zip
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.4-all.zip
+          EOF
+
+      # MAIN ACTIVITY
+      - name: Fix MainActivity
+        run: |
+          mkdir -p android/app/src/main/kotlin/com/chas/aicreator
+          cat > android/app/src/main/kotlin/com/chas/aicreator/MainActivity.kt << 'EOF'
+          package com.chas.aicreator
+
+          import io.flutter.embedding.android.FlutterActivity
+
+          class MainActivity: FlutterActivity()
+          EOF
+
+      # MANIFEST
+      - name: Fix AndroidManifest
+        run: |
+          mkdir -p android/app/src/main
+          cat > android/app/src/main/AndroidManifest.xml << 'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:label="chas_ai_creator"
+                  android:icon="@mipmap/ic_launcher">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:theme="@style/LaunchTheme">
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+
+                  </activity>
+
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2"/>
+
+              </application>
+          </manifest>
           EOF
 
       - name: Install Dependencies
         run: flutter pub get
 
-      # BUILD APK
-      - name: Build Release APK
-        run: flutter build apk --release --no-shrink --no-tree-shake-icons
+      # BUILD
+      - name: Build APK
+        run: flutter build apk --release --no-tree-shake-icons --no-shrink
 
-      # UPLOAD APK
+      # UPLOAD
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
