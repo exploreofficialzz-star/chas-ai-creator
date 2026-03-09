@@ -8,6 +8,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 import '../models/user.dart';
 
@@ -31,6 +32,11 @@ class AuthService {
 
   // Current user
   User? _currentUser;
+
+  // Google Sign-In instance
+  final GoogleSignIn _googleSignIn = GoogleSignIn(
+    scopes: ['email', 'profile'],
+  );
 
   /// Get stored access token
   Future<String?> getAccessToken() async {
@@ -88,52 +94,62 @@ class AuthService {
     return null;
   }
 
-  /// Register with email and password
-  Future<User> registerWithEmail(
-    String email,
-    String password, {
-    String? displayName,
-  }) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/auth/register'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'email': email,
-          'password': password,
-          'display_name': displayName,
-        }),
-      );
+/// Register with email and password
+Future<User> registerWithEmail(
+  String email,
+  String password, {
+  String? displayName,
+}) async {
+  try {
+    print('🔵 Sending registration request to: $baseUrl/auth/register');
+    print('🔵 Email: $email');
+    
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/register'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'email': email,
+        'password': password,
+        'display_name': displayName,
+      }),
+    );
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        
-        // Save tokens
-        await _saveTokens(
-          data['access_token'],
-          data['refresh_token'],
-        );
-        
-        // Create user object
-        final user = User(
-          id: data['user']['id'],
-          email: data['user']['email'],
-          displayName: data['user']['display_name'],
-          subscriptionTier: data['user']['subscription_tier'],
-          credits: data['user']['credits'],
-        );
-        
-        await _saveUser(user);
-        
-        return user;
-      } else {
-        final error = jsonDecode(response.body);
-        throw Exception(error['detail'] ?? 'Registration failed');
-      }
-    } catch (e) {
-      throw Exception('Registration failed: $e');
+    print('🟢 Response status: ${response.statusCode}');
+    print('🟢 Response body: ${response.body}');
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      
+      // Save tokens
+      await _saveTokens(
+        data['access_token'],
+        data['refresh_token'],
+      );
+      
+      // Create user object
+      final user = User(
+        id: data['user']['id'],
+        email: data['user']['email'],
+        displayName: data['user']['display_name'],
+        subscriptionTier: data['user']['subscription_tier'],
+        credits: data['user']['credits'],
+      );
+      
+      await _saveUser(user);
+      
+      return user;
+    } else {
+      final error = jsonDecode(response.body);
+      final errorMsg = error['error'] ?? error['detail'] ?? 'Registration failed';
+      print('🔴 Server error: $errorMsg');
+      throw Exception(errorMsg);
     }
+  } catch (e) {
+    print('🔴 Registration exception: $e');
+    throw Exception('Registration failed: $e');
   }
+}
+
 
   /// Sign in with email and password
   Future<User> signInWithEmail(String email, String password) async {
@@ -177,8 +193,79 @@ class AuthService {
     }
   }
 
-  /// Social login (Google/Apple) - Simplified for Nigeria
-  /// In production, implement proper OAuth flow
+  /// Sign in with Google - WORKING IMPLEMENTATION
+  Future<User> signInWithGoogle() async {
+    try {
+      // Trigger Google Sign-In flow
+      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+      
+      if (googleUser == null) {
+        throw Exception('Google Sign-In cancelled by user');
+      }
+
+      // Get authentication details
+      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+      
+      // Get ID token (this is what we send to backend)
+      final String? idToken = googleAuth.idToken;
+      final String? accessToken = googleAuth.accessToken;
+      
+      if (idToken == null) {
+        throw Exception('Failed to get Google ID token');
+      }
+
+      // Send to your backend for verification and JWT token generation
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/social-login'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'provider': 'google',
+          'token': idToken,
+          'email': googleUser.email,
+          'display_name': googleUser.displayName,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        
+        // Save tokens from your backend
+        await _saveTokens(
+          data['access_token'],
+          data['refresh_token'],
+        );
+        
+        // Create user object
+        final user = User(
+          id: data['user']['id'],
+          email: data['user']['email'],
+          displayName: data['user']['display_name'],
+          subscriptionTier: data['user']['subscription_tier'],
+          credits: data['user']['credits'],
+        );
+        
+        await _saveUser(user);
+        
+        return user;
+      } else {
+        final error = jsonDecode(response.body);
+        throw Exception(error['detail'] ?? 'Google login failed');
+      }
+    } catch (e) {
+      // Sign out from Google if backend auth fails
+      await _googleSignIn.signOut();
+      throw Exception('Google Sign-In failed: $e');
+    }
+  }
+
+  /// Sign in with Apple - PLACEHOLDER (requires iOS setup)
+  Future<User> signInWithApple() async {
+    // Apple Sign-In requires iOS developer account and specific setup
+    // For now, show message to use Google or email
+    throw Exception('Apple Sign-In coming soon. Please use Google or Email login.');
+  }
+
+  /// Social login (generic - used by Google/Apple)
   Future<User> socialLogin({
     required String provider,
     required String token,
@@ -227,23 +314,15 @@ class AuthService {
     }
   }
 
-  /// Sign in with Google (simplified)
-  Future<User> signInWithGoogle() async {
-    // For Nigeria version, you can use google_sign_in package
-    // and send the ID token to your backend
-    // For now, this is a placeholder
-    throw Exception('Google Sign-In not implemented. Use email/password login.');
-  }
-
-  /// Sign in with Apple (simplified)
-  Future<User> signInWithApple() async {
-    // For iOS version, implement Apple Sign-In
-    // and send the identity token to your backend
-    throw Exception('Apple Sign-In not implemented. Use email/password login.');
-  }
-
   /// Sign out
   Future<void> signOut() async {
+    // Sign out from Google
+    try {
+      await _googleSignIn.signOut();
+    } catch (e) {
+      // Ignore errors
+    }
+    
     await _clearAuthData();
   }
 
@@ -366,4 +445,3 @@ class AuthService {
     };
   }
 }
-
