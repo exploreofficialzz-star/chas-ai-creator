@@ -32,6 +32,12 @@ class AuthService {
     return prefs.getString(_accessTokenKey);
   }
 
+  /// Get stored refresh token
+  Future<String?> getRefreshToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_refreshTokenKey);
+  }
+
   /// Save tokens to storage
   Future<void> _saveTokens(String accessToken, String refreshToken) async {
     final prefs = await SharedPreferences.getInstance();
@@ -55,6 +61,27 @@ class AuthService {
     _currentUser = null;
   }
 
+  /// Check if user is signed in
+  Future<bool> isSignedIn() async {
+    final token = await getAccessToken();
+    return token != null && token.isNotEmpty;
+  }
+
+  /// Get current user
+  Future<User?> getCurrentUser() async {
+    if (_currentUser != null) return _currentUser;
+    
+    final prefs = await SharedPreferences.getInstance();
+    final userData = prefs.getString(_userKey);
+    
+    if (userData != null) {
+      _currentUser = User.fromJson(jsonDecode(userData));
+      return _currentUser;
+    }
+    
+    return null;
+  }
+
   /// Register with email and password
   Future<User> registerWithEmail(
     String email,
@@ -65,7 +92,6 @@ class AuthService {
       developer.log('🔵 REGISTER: Starting...', name: 'AuthService');
       
       final uri = Uri.parse('$baseUrl/auth/register');
-      developer.log('🔵 URL: $uri', name: 'AuthService');
       
       final requestBody = {
         'email': email.trim(),
@@ -76,20 +102,17 @@ class AuthService {
       final jsonBody = jsonEncode(requestBody);
       developer.log('🔵 Body: $jsonBody', name: 'AuthService');
 
-      // Make request with explicit headers
       final response = await http.post(
         uri,
         headers: {
           'Content-Type': 'application/json; charset=UTF-8',
           'Accept': 'application/json',
-          'Origin': 'https://chas-ai-creator-2.onrender.com',
         },
         body: jsonBody,
       ).timeout(const Duration(seconds: 30));
 
       developer.log('🟢 Status: ${response.statusCode}', name: 'AuthService');
       developer.log('🟢 Body: ${response.body}', name: 'AuthService');
-      developer.log('🟢 Headers: ${response.headers}', name: 'AuthService');
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -120,9 +143,8 @@ class AuthService {
         }
         throw Exception(errorMsg);
       }
-    } catch (e, stackTrace) {
+    } catch (e) {
       developer.log('🔴 ERROR: $e', name: 'AuthService');
-      developer.log('🔴 STACK: $stackTrace', name: 'AuthService');
       throw Exception('Registration failed: $e');
     }
   }
@@ -170,9 +192,72 @@ class AuthService {
     }
   }
 
+  /// Sign in with Google - PLACEHOLDER
+  Future<User> signInWithGoogle() async {
+    throw Exception('Google Sign-In not configured. Please use email/password.');
+  }
+
+  /// Sign in with Apple - PLACEHOLDER
+  Future<User> signInWithApple() async {
+    throw Exception('Apple Sign-In not configured. Please use email/password.');
+  }
+
+  /// Refresh access token
+  Future<String?> refreshAccessToken() async {
+    try {
+      final refreshToken = await getRefreshToken();
+      
+      if (refreshToken == null) return null;
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/refresh'),
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode({'refresh_token': refreshToken}),
+      ).timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final newAccessToken = data['access_token'];
+        
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_accessTokenKey, newAccessToken);
+        
+        return newAccessToken;
+      }
+    } catch (e) {
+      await _clearAuthData();
+    }
+    
+    return null;
+  }
+
   /// Sign out
   Future<void> signOut() async {
     await _clearAuthData();
+  }
+
+  /// Reset password
+  Future<void> resetPassword(String email) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/forgot-password'),
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode({'email': email.trim()}),
+      ).timeout(const Duration(seconds: 30));
+
+      if (response.statusCode != 200) {
+        final error = jsonDecode(response.body);
+        throw Exception(error['error'] ?? error['detail'] ?? 'Password reset failed');
+      }
+    } catch (e) {
+      throw Exception('Password reset failed: $e');
+    }
   }
 
   /// Get auth headers for API requests
