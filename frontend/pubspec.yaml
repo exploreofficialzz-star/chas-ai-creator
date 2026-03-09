@@ -35,7 +35,7 @@ dependencies:
   
   # Networking
   dio: ^5.4.0
-  http: ^0.13.5
+  http: ^1.1.0
   retrofit: ^4.0.3
   connectivity_plus: ^5.0.2
   
@@ -58,7 +58,7 @@ dependencies:
   photo_view: ^0.14.0
   
   # Utils
-  intl: ^0.17.0
+  intl: ^0.18.1
   uuid: ^4.3.3
   path_provider: ^2.1.1
   permission_handler: ^11.1.0
@@ -70,16 +70,14 @@ dependencies:
   # Ads - Unity Ads
   unity_ads_plugin: ^0.3.8
   
-  # Payments - Paystack
-  flutter_paystack: ^1.0.7
+  # Payments - Paystack (Updated to maintained fork)
+  flutter_paystack_payment: ^1.0.1
   
   # Notifications
   flutter_local_notifications: ^16.3.0
   
   # WebView for Paystack
   webview_flutter: ^4.4.2
-  
-  # REMOVED: in_app_review (causing build issues)
 
 dev_dependencies:
   flutter_test:
@@ -94,3 +92,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   
+  assets:
+    - assets/images/
+    - assets/icons/
+    - assets/animations/
