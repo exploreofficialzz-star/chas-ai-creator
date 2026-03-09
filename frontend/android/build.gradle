@@ -1,10 +1,14 @@
 buildscript {
-    ext.kotlin_version = '1.9.22'
+    // FIX: Match Kotlin version from settings.gradle
+    ext.kotlin_version = '1.7.21'
+    
     repositories {
         google()
         mavenCentral()
     }
+
     dependencies {
+        // FIX: AGP 7.4.2 to match settings.gradle
         classpath 'com.android.tools.build:gradle:7.4.2'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
     }
@@ -18,10 +22,12 @@ allprojects {
 }
 
 rootProject.buildDir = '../build'
+
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
     project.evaluationDependsOn(':app')
 }
+
 tasks.register("clean", Delete) {
     delete rootProject.buildDir
 }
