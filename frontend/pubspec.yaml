@@ -70,14 +70,21 @@ dependencies:
   # Ads - Unity Ads
   unity_ads_plugin: ^0.3.8
   
-  # Payments - Paystack (Updated to maintained fork)
-  flutter_paystack_payment: ^1.0.1
+  # Payments - Paystack (Use flutter_paystack with override)
+  flutter_paystack: ^1.0.7
+  
+  # Alternative: Use http for custom Paystack integration
+  # http is already included above
   
   # Notifications
   flutter_local_notifications: ^16.3.0
   
   # WebView for Paystack
   webview_flutter: ^4.4.2
+
+dependency_overrides:
+  # Fix for flutter_paystack compatibility issues
+  intl: ^0.18.1
 
 dev_dependencies:
   flutter_test:
