@@ -73,11 +73,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 duration: const Duration(seconds: 4),
               ),
             );
-          } else if (state is Authenticated) {  // <-- FIXED HERE
-            // Success! Navigate to home screen
+          } else if (state is Authenticated) {
             setState(() => _isLoading = false);
-            // TODO: Navigate to home screen
-            // Navigator.of(context).pushReplacementNamed('/home');
+            Navigator.of(context).pushReplacementNamed('/home');
           }
         },
         child: SafeArea(
@@ -341,5 +339,3 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       ),
     );
-  }
-}
