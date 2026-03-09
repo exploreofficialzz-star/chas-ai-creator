@@ -89,15 +89,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS - Critical for Flutter frontend
+# CORS - Critical for Flutter frontend - PERMISSIVE VERSION
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=["*"],  # Allow ALL origins temporarily for testing
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Process-Time"],  # Expose custom headers
+    expose_headers=["*"],
 )
+
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
