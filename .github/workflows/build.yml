@@ -62,8 +62,12 @@ jobs:
           mkdir -p /home/runner/.android
           keytool -genkey -v -keystore /home/runner/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
-      - name: Make gradlew executable
-        run: chmod +x android/gradlew
+      - name: Setup Gradle wrapper
+        run: |
+          mkdir -p android/gradle/wrapper
+          curl -sL -o android/gradle/wrapper/gradle-wrapper.jar \
+            https://github.com/flutter/flutter/raw/3.19.0/packages/flutter_tools/gradle/gradle-wrapper.jar
+          chmod +x android/gradlew
 
       - name: Flutter doctor
         run: flutter doctor -v
