@@ -34,12 +34,10 @@
             android:name="flutterEmbedding"
             android:value="2"/>
             
-        <!-- AdMob App ID (replace with your actual ID) -->
+        <!-- Unity Ads Game ID (replace with your actual ID) -->
         <meta-data
-            android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-xxxxxxxxxxxxxxxx~yyyyyyyyyy"/>
+            android:name="com.unity3d.ads.gameId"
+            android:value="YOUR_UNITY_GAME_ID"/>
+            
     </application>
 </manifest>
-
-
- 
