@@ -18,10 +18,10 @@ pluginManagement {
 
 plugins {
     id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-    // FIX: Downgrade AGP to 7.4.2 to match build.gradle
+    // FIX: Use AGP 7.4.2 (stable, compatible with Flutter 3.19)
     id "com.android.application" version "7.4.2" apply false
-    // FIX: Upgrade Kotlin to 1.9.22 (latest stable)
-    id "org.jetbrains.kotlin.android" version "1.9.22" apply false
+    // FIX: Use Kotlin 1.7.21 (compatible with R8 in AGP 7.4.2)
+    id "org.jetbrains.kotlin.android" version "1.7.21" apply false
 }
 
 include ":app"
