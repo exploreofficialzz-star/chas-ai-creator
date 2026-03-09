@@ -14,62 +14,52 @@ import 'screens/home/home_screen.dart';
 import 'screens/onboarding/onboarding_screen.dart';
 import 'screens/splash_screen.dart';
 
-class App extends StatelessWidget {
+class App extends StatefulWidget {
   const App({super.key});
+
+  @override
+  State<App> createState() => _AppState();
+}
+
+class _AppState extends State<App> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() {
+      context.read<AuthBloc>().add(AppStarted());
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<AuthBloc, AuthState>(
       builder: (context, state) {
-        // Show splash screen while checking auth
-        if (state is AuthInitial) {
+        if (state is AuthInitial || state is AuthLoading) {
           return const SplashScreen();
         }
-        
-        // Show onboarding for new users
-        if (state is AuthInitial) {
-          return FutureBuilder<bool>(
-            future: _checkOnboarding(),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const SplashScreen();
-              }
-              
-              final hasSeenOnboarding = snapshot.data ?? false;
-              if (!hasSeenOnboarding) {
-                return const OnboardingScreen();
-              }
-              
-              return const LoginScreen();
-            },
-          );
-        }
-        
-        // User is authenticated
+
         if (state is Authenticated) {
           return const HomeScreen();
         }
-        
-        // User is not authenticated
-        if (state is Unauthenticated) {
+
+        if (state is Unauthenticated || state is AuthError) {
           return FutureBuilder<bool>(
             future: _checkOnboarding(),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const SplashScreen();
               }
-              
+
               final hasSeenOnboarding = snapshot.data ?? false;
               if (!hasSeenOnboarding) {
                 return const OnboardingScreen();
               }
-              
+
               return const LoginScreen();
             },
           );
         }
-        
-        // Default to splash
+
         return const SplashScreen();
       },
     );
