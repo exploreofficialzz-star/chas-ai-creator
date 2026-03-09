@@ -33,11 +33,13 @@ jobs:
       - name: Flutter Doctor
         run: flutter doctor -v
 
+      # Clean old builds
       - name: Clean Project
         run: |
           flutter clean
           rm -rf android
 
+      # Recreate Android project
       - name: Recreate Android Project
         run: flutter create --platforms=android .
 
@@ -87,7 +89,6 @@ jobs:
           rootProject.buildDir = '../build'
           subprojects {
               project.buildDir = "${rootProject.buildDir}/${project.name}"
-              project.evaluationDependsOn(':app')
           }
 
           tasks.register("clean", Delete) {
@@ -102,7 +103,6 @@ jobs:
           plugins {
               id "com.android.application"
               id "org.jetbrains.kotlin.android"
-              id "dev.flutter.flutter-gradle-plugin"
           }
 
           android {
