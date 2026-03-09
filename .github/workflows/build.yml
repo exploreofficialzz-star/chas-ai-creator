@@ -8,31 +8,200 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    
+
     defaults:
       run:
         working-directory: ./frontend
 
     steps:
-      - uses: actions/checkout@v4
-      
-      - uses: actions/setup-java@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
-      
-      - uses: subosito/flutter-action@v2
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
           flutter-version: 3.19.0
           channel: stable
-      
-      - run: flutter doctor -v
-      
-      - run: flutter pub get
-      
-      - run: flutter build apk --release
-      
-      - uses: actions/upload-artifact@v4
+          cache: true
+
+      - name: Check existing Android folder
+        run: |
+          echo "=== Checking android folder ==="
+          ls -la android/ 2>/dev/null || echo "No android folder"
+          ls -la android/app/build.gradle 2>/dev/null || echo "No app/build.gradle"
+
+      - name: Generate fresh Android project
+        run: |
+          echo "=== Removing old android folder ==="
+          rm -rf android
+          echo "=== Creating fresh Android project ==="
+          flutter create --platforms=android .
+          echo "=== Verifying new android folder ==="
+          ls -la android/
+          ls -la android/app/
+
+      - name: Configure Android build.gradle
+        run: |
+          cat > android/app/build.gradle << 'BUILDFILE'
+          plugins {
+              id "com.android.application"
+              id "kotlin-android"
+              id "dev.flutter.flutter-gradle-plugin"
+          }
+          
+          def localProperties = new Properties()
+          def localPropertiesFile = rootProject.file('local.properties')
+          if (localPropertiesFile.exists()) {
+              localPropertiesFile.withReader('UTF-8') { reader ->
+                  localProperties.load(reader)
+              }
+          }
+          
+          def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+          if (flutterVersionCode == null) {
+              flutterVersionCode = '1'
+          }
+          
+          def flutterVersionName = localProperties.getProperty('flutter.versionName')
+          if (flutterVersionName == null) {
+              flutterVersionName = '1.0'
+          }
+          
+          android {
+              namespace "com.chasaicreator.app"
+              compileSdk 34
+              ndkVersion flutter.ndkVersion
+          
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_1_8
+                  targetCompatibility JavaVersion.VERSION_1_8
+              }
+          
+              kotlinOptions {
+                  jvmTarget = '1.8'
+              }
+          
+              defaultConfig {
+                  applicationId "com.chasaicreator.app"
+                  minSdkVersion 21
+                  targetSdkVersion 34
+                  versionCode flutterVersionCode.toInteger()
+                  versionName flutterVersionName
+                  multiDexEnabled true
+              }
+          
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.debug
+                      minifyEnabled false
+                      shrinkResources false
+                  }
+                  debug {
+                      signingConfig signingConfigs.debug
+                  }
+              }
+          }
+          
+          flutter {
+              source '../..'
+          }
+          
+          dependencies {
+              implementation 'androidx.multidex:multidex:2.0.1'
+              implementation 'com.unity3d.ads:unity-ads:4.9.3'
+          }
+          BUILDFILE
+
+      - name: Configure AndroidManifest.xml
+        run: |
+          cat > android/app/src/main/AndroidManifest.xml << 'MANIFESTFILE'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+              
+              <application
+                  android:label="ChAs AI Creator"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher">
+                  
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      
+                      <meta-data
+                          android:name="io.flutter.embedding.android.NormalTheme"
+                          android:resource="@style/NormalTheme"/>
+                          
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2"/>
+                      
+                  <meta-data
+                      android:name="com.unity3d.ads.gameId"
+                      android:value="YOUR_UNITY_GAME_ID"/>
+              </application>
+          </manifest>
+          MANIFESTFILE
+
+      - name: Configure MainActivity.kt
+        run: |
+          mkdir -p android/app/src/main/kotlin/com/chasaicreator/app
+          cat > android/app/src/main/kotlin/com/chasaicreator/app/MainActivity.kt << 'MAINFILE'
+          package com.chasaicreator.app
+          import io.flutter.embedding.android.FlutterActivity
+          class MainActivity: FlutterActivity()
+          MAINFILE
+
+      - name: Configure gradle.properties
+        run: |
+          cat > android/gradle.properties << 'PROPSFILE'
+          org.gradle.jvmargs=-Xmx4G -XX:MaxMetaspaceSize=2G -XX:+HeapDumpOnOutOfMemoryError
+          android.useAndroidX=true
+          android.enableJetifier=true
+          kotlin.code.style=official
+          PROPSFILE
+
+      - name: Verify configuration
+        run: |
+          echo "=== Verifying configuration ==="
+          ls -la android/app/build.gradle
+          ls -la android/app/src/main/AndroidManifest.xml
+          ls -la android/app/src/main/kotlin/com/chasaicreator/app/MainActivity.kt
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Find APK
+        run: |
+          echo "=== Finding APK ==="
+          find build -name "*.apk" -type f
+          mkdir -p output
+          find build -name "*.apk" -type f -exec cp {} output/ \;
+          ls -la output/
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
-          name: apk
-          path: frontend/build/app/outputs/flutter-apk/app-release.apk
+          name: chas-ai-creator-apk
+          path: frontend/output/*.apk
+          if-no-files-found: error
