@@ -17,9 +17,9 @@ class ApiService {
   late Dio _dio;
   final AuthService _authService = AuthService();
   
-  // API Base URL - Change this for production
-  // Use your Railway deployed backend URL
-  static const String baseUrl = 'https://your-app.railway.app/api/v1';
+  // API Base URL - Production (Render)
+  // Your deployed backend URL
+  static const String baseUrl = 'https://chas-ai-creator-2.onrender.com/api/v1';
   // For local development: 'http://localhost:8000/api/v1'
   
   ApiService() {
