@@ -11,7 +11,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: ./frontend
+        working-directory: frontend
 
     steps:
       - name: Checkout Repository
@@ -27,183 +27,17 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           flutter-version: 3.19.0
-          channel: stable
           cache: true
 
       - name: Flutter Doctor
-        run: flutter doctor -v
-
-      - name: Clean Project
-        run: |
-          flutter clean
-          rm -rf android
-
-      - name: Recreate Android Project
-        run: |
-          flutter create --platforms=android .
-
-      # SETTINGS.GRADLE
-      - name: Fix settings.gradle
-        run: |
-          cat > android/settings.gradle << 'EOF'
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-
-          plugins {
-              id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-              id "com.android.application" version "8.2.2" apply false
-              id "org.jetbrains.kotlin.android" version "1.9.24" apply false
-          }
-
-          include ":app"
-          EOF
-
-      # ROOT BUILD.GRADLE
-      - name: Fix root build.gradle
-        run: |
-          cat > android/build.gradle << 'EOF'
-          allprojects {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-
-          rootProject.buildDir = '../build'
-
-          subprojects {
-              project.buildDir = "${rootProject.buildDir}/${project.name}"
-          }
-
-          tasks.register("clean", Delete) {
-              delete rootProject.buildDir
-          }
-          EOF
-
-      # APP BUILD.GRADLE
-      - name: Fix app/build.gradle
-        run: |
-          cat > android/app/build.gradle << 'EOF'
-          plugins {
-              id "com.android.application"
-              id "org.jetbrains.kotlin.android"
-              id "dev.flutter.flutter-gradle-plugin"
-          }
-
-          android {
-              namespace "com.chas.aicreator"
-              compileSdk 34
-
-              defaultConfig {
-                  applicationId "com.chas.aicreator"
-                  minSdk 21
-                  targetSdk 34
-                  versionCode 1
-                  versionName "1.0"
-              }
-
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_17
-                  targetCompatibility JavaVersion.VERSION_17
-              }
-
-              kotlinOptions {
-                  jvmTarget = "17"
-              }
-
-              buildTypes {
-                  release {
-                      minifyEnabled false
-                      shrinkResources false
-                      signingConfig signingConfigs.debug
-                  }
-              }
-          }
-
-          flutter {
-              source '../..'
-          }
-          EOF
-
-      # GRADLE PROPERTIES (VERY IMPORTANT)
-      - name: Fix gradle.properties
-        run: |
-          cat > android/gradle.properties << 'EOF'
-          org.gradle.jvmargs=-Xmx4096m
-          android.useAndroidX=true
-          android.enableJetifier=true
-          android.enableR8=false
-          kotlin.incremental=false
-          EOF
-
-      # GRADLE WRAPPER
-      - name: Fix Gradle Wrapper
-        run: |
-          mkdir -p android/gradle/wrapper
-          cat > android/gradle/wrapper/gradle-wrapper.properties << 'EOF'
-          distributionBase=GRADLE_USER_HOME
-          distributionPath=wrapper/dists
-          zipStoreBase=GRADLE_USER_HOME
-          zipStorePath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-8.4-all.zip
-          EOF
-
-      # MAIN ACTIVITY
-      - name: Fix MainActivity
-        run: |
-          mkdir -p android/app/src/main/kotlin/com/chas/aicreator
-          cat > android/app/src/main/kotlin/com/chas/aicreator/MainActivity.kt << 'EOF'
-          package com.chas.aicreator
-
-          import io.flutter.embedding.android.FlutterActivity
-
-          class MainActivity: FlutterActivity()
-          EOF
-
-      # MANIFEST
-      - name: Fix AndroidManifest
-        run: |
-          mkdir -p android/app/src/main
-          cat > android/app/src/main/AndroidManifest.xml << 'EOF'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <application
-                  android:label="chas_ai_creator"
-                  android:icon="@mipmap/ic_launcher">
-
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true"
-                      android:launchMode="singleTop"
-                      android:theme="@style/LaunchTheme">
-
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN"/>
-                          <category android:name="android.intent.category.LAUNCHER"/>
-                      </intent-filter>
-
-                  </activity>
-
-                  <meta-data
-                      android:name="flutterEmbedding"
-                      android:value="2"/>
-
-              </application>
-          </manifest>
-          EOF
+        run: flutter doctor
 
       - name: Install Dependencies
         run: flutter pub get
 
-      # BUILD
-      - name: Build APK
+      - name: Build Release APK
         run: flutter build apk --release --no-tree-shake-icons --no-shrink
 
-      # UPLOAD
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
