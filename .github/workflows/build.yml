@@ -25,13 +25,43 @@ jobs:
       - name: Clean Flutter
         run: flutter clean
       
-      - name: Recreate Android Project with V2 Embedding
+      - name: Recreate Android Project
         run: |
           rm -rf android
           flutter config --enable-android
           flutter create --platforms=android .
       
-      - name: Fix AndroidManifest for V2 Embedding
+      - name: Fix settings.gradle
+        run: |
+          cat > android/settings.gradle << 'EOF'
+          pluginManagement {
+              def flutterSdkPath = {
+                  def properties = new Properties()
+                  file("local.properties").withInputStream { properties.load(it) }
+                  def flutterSdkPath = properties.getProperty("flutter.sdk")
+                  assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
+                  return flutterSdkPath
+              }()
+
+              includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
+
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          plugins {
+              id "dev.flutter.flutter-plugin-loader" version "1.0.0"
+              id "com.android.application" version "7.4.2" apply false
+              id "org.jetbrains.kotlin.android" version "1.9.22" apply false
+          }
+
+          include ":app"
+          EOF
+      
+      - name: Fix AndroidManifest.xml
         run: |
           cat > android/app/src/main/AndroidManifest.xml << 'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -69,7 +99,7 @@ jobs:
           </manifest>
           EOF
       
-      - name: Fix MainActivity for V2 Embedding
+      - name: Fix MainActivity.kt
         run: |
           mkdir -p android/app/src/main/kotlin/com/chas/aicreator
           cat > android/app/src/main/kotlin/com/chas/aicreator/MainActivity.kt << 'EOF'
@@ -77,35 +107,16 @@ jobs:
 
           import io.flutter.embedding.android.FlutterActivity
 
-          class MainActivity: FlutterActivity() {
-          }
+          class MainActivity: FlutterActivity()
           EOF
       
-      - name: Update Android Config
+      - name: Fix app/build.gradle
         run: |
           cat > android/app/build.gradle << 'EOF'
           plugins {
               id "com.android.application"
               id "kotlin-android"
               id "dev.flutter.flutter-gradle-plugin"
-          }
-
-          def localProperties = new Properties()
-          def localPropertiesFile = rootProject.file('local.properties')
-          if (localPropertiesFile.exists()) {
-              localPropertiesFile.withReader('UTF-8') { reader ->
-                  localProperties.load(reader)
-              }
-          }
-
-          def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
-          if (flutterVersionCode == null) {
-              flutterVersionCode = '1'
-          }
-
-          def flutterVersionName = localProperties.getProperty('flutter.versionName')
-          if (flutterVersionName == null) {
-              flutterVersionName = '1.0'
           }
 
           android {
@@ -122,16 +133,12 @@ jobs:
                   jvmTarget = '17'
               }
 
-              sourceSets {
-                  main.java.srcDirs += 'src/main/kotlin'
-              }
-
               defaultConfig {
                   applicationId "com.chas.aicreator"
                   minSdkVersion 21
                   targetSdkVersion 34
-                  versionCode flutterVersionCode.toInteger()
-                  versionName flutterVersionName
+                  versionCode 1
+                  versionName "1.0.0"
               }
 
               buildTypes {
@@ -146,26 +153,11 @@ jobs:
           flutter {
               source '../..'
           }
-
-          dependencies {
-              implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.22"
-          }
           EOF
-          
-          # FIX: Updated Kotlin version to 1.9.22
+      
+      - name: Fix root build.gradle
+        run: |
           cat > android/build.gradle << 'EOF'
-          buildscript {
-              ext.kotlin_version = '1.9.22'
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-              dependencies {
-                  classpath 'com.android.tools.build:gradle:8.2.1'
-                  classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
-              }
-          }
-
           allprojects {
               repositories {
                   google()
@@ -185,14 +177,15 @@ jobs:
               delete rootProject.buildDir
           }
           EOF
-          
-          # FIX: Updated Gradle to 8.5 for AGP 8.2.1
+      
+      - name: Fix gradle wrapper
+        run: |
           cat > android/gradle/wrapper/gradle-wrapper.properties << 'EOF'
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-8.5-all.zip
+          distributionUrl=https\://services.gradle.org/distributions/gradle-7.6.3-all.zip
           EOF
       
       - name: Install dependencies
