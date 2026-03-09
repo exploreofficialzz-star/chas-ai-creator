@@ -26,7 +26,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.19.0
+          flutter-version: '3.19.0'
           channel: stable
           cache: true
 
@@ -37,18 +37,35 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('frontend/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Cache Pub dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            ${{ github.workspace }}/frontend/.dart_tool
+          key: ${{ runner.os }}-pub-${{ hashFiles('frontend/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
 
       - name: Flutter doctor
         run: flutter doctor -v
+
+      - name: Clean project
+        run: flutter clean
 
       - name: Get dependencies
         run: flutter pub get
 
       - name: Build release APK
-        run: flutter build apk --release
+        run: flutter build apk --release --verbose
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: chas-ai-creator-apk
           path: frontend/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 5
