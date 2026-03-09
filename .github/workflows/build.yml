@@ -30,31 +30,6 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Check Android SDK
-        run: |
-          echo "ANDROID_HOME: $ANDROID_HOME"
-          ls -la $ANDROID_HOME || echo "ANDROID_HOME not set"
-          ls -la /usr/local/lib/android/sdk 2>/dev/null || echo "Default SDK path not found"
-
-      - name: Flutter doctor
-        run: flutter doctor -v
-
-      - name: Check project structure
-        run: |
-          echo "=== Current directory ==="
-          pwd
-          ls -la
-          echo ""
-          echo "=== Android directory ==="
-          ls -la android/ 2>/dev/null || echo "android directory not found"
-          echo ""
-          echo "=== Gradle wrapper ==="
-          ls -la android/gradle/wrapper/ 2>/dev/null || echo "wrapper not found"
-          echo ""
-          echo "=== Check gradlew ==="
-          file android/gradlew 2>/dev/null || echo "gradlew not found"
-          head -5 android/gradlew 2>/dev/null || echo "cannot read gradlew"
-
       - name: Create local.properties
         run: |
           echo "flutter.sdk=${FLUTTER_ROOT}" > android/local.properties
@@ -62,20 +37,13 @@ jobs:
           echo "flutter.buildMode=release" >> android/local.properties
           echo "flutter.versionName=1.0.0" >> android/local.properties
           echo "flutter.versionCode=1" >> android/local.properties
-          cat android/local.properties
 
       - name: Setup Gradle wrapper
         run: |
           mkdir -p android/gradle/wrapper
-          if [ ! -f android/gradle/wrapper/gradle-wrapper.jar ]; then
-            echo "Downloading gradle-wrapper.jar..."
-            curl -sL -o android/gradle/wrapper/gradle-wrapper.jar \
-              https://github.com/flutter/flutter/raw/3.19.0/packages/flutter_tools/gradle/gradle-wrapper.jar
-            echo "Download complete. File size:"
-            ls -lh android/gradle/wrapper/gradle-wrapper.jar
-          fi
+          curl -sL -o android/gradle/wrapper/gradle-wrapper.jar \
+            https://github.com/flutter/flutter/raw/3.19.0/packages/flutter_tools/gradle/gradle-wrapper.jar
           chmod +x android/gradlew
-          ls -la android/gradlew
 
       - name: Create key.properties
         run: |
@@ -87,23 +55,27 @@ jobs:
 
       - name: Generate debug keystore
         run: |
-          keytool -genkey -v -keystore /home/runner/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" || echo "Keystore may already exist"
+          keytool -genkey -v -keystore /home/runner/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Try build with verbose output
-        run: |
-          flutter build apk --release --verbose 2>&1 | head -100
+      - name: Build release APK
+        run: flutter build apk --release
 
-      - name: Check build directory
-        if: failure()
+      - name: Find and copy APK
         run: |
-          echo "=== Build directory contents ==="
-          ls -la build/ 2>/dev/null || echo "build directory not found"
-          echo ""
-          echo "=== App directory ==="
-          ls -la build/app/ 2>/dev/null || echo "app directory not found"
-          echo ""
-          echo "=== Find any APK ==="
-          find . -name "*.apk" 2>/dev/null || echo "No APK found"
+          echo "=== Searching for APK ==="
+          find build -name "*.apk" -type f 2>/dev/null
+          mkdir -p output
+          find build -name "*.apk" -type f -exec cp {} output/ \;
+          ls -la output/
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: chas-ai-creator-apk
+          path: output/*.apk
+          if-no-files-found: error
+          retention-days: 5
