@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
@@ -17,579 +18,1210 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final ApiService _apiService = ApiService();
   UserSettings? _settings;
+  User? _user;
   bool _isLoading = true;
+  bool _isSaving = false;
 
   @override
   void initState() {
     super.initState();
-    _loadSettings();
+    _loadData();
   }
 
-  Future<void> _loadSettings() async {
+  Future<void> _loadData() async {
     try {
-      final settings = await _apiService.getUserSettings();
-      setState(() {
-        _settings = settings;
-        _isLoading = false;
-      });
+      final results = await Future.wait([
+        _apiService.getUserSettings(),
+        _apiService.getCurrentUser(),
+      ]);
+      if (mounted) {
+        setState(() {
+          _settings = results[0] as UserSettings?;
+          _user = results[1] as User;
+          // FIX 1 - apply smart defaults if settings come back null
+          _settings ??= UserSettings(
+            defaultNiche: 'general',
+            defaultVideoLength: 30,
+            defaultAspectRatio: '9:16',
+            defaultStyle: 'cinematic',
+            captionsEnabled: true,
+            captionStyle: 'modern',
+            captionEmojiEnabled: true,
+            backgroundMusicEnabled: true,
+            backgroundMusicStyle: 'upbeat',
+            emailNotificationsEnabled: true,
+            pushNotificationsEnabled: true,
+            notifyOnVideoComplete: true,
+            defaultAudioMode: 'narration',
+            defaultVoiceStyle: 'professional',
+            characterConsistencyEnabled: false,
+            defaultTargetPlatforms: ['tiktok'],
+          );
+          _isLoading = false;
+        });
+      }
     } catch (e) {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _updateSettings(UserSettings newSettings) async {
+    if (_isSaving) return;
+    setState(() {
+      _settings = newSettings;
+      _isSaving = true;
+    });
     try {
       await _apiService.updateUserSettings(newSettings);
-      setState(() => _settings = newSettings);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Settings saved!')),
-      );
+      if (mounted) {
+        setState(() => _isSaving = false);
+        _showToast('✅ Settings saved!');
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to update settings: $e')),
-      );
+      if (mounted) {
+        setState(() => _isSaving = false);
+        _showToast('❌ ${_apiService.handleError(e)}', error: true);
+      }
     }
   }
+
+  void _showToast(String msg, {bool error = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor:
+            error ? Colors.red.shade700 : Colors.green.shade700,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10.r)),
+        margin: EdgeInsets.all(12.w),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // BUILD
+  // ─────────────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Settings'),
+        actions: [
+          if (_isSaving)
+            Padding(
+              padding: EdgeInsets.only(right: 16.w),
+              child: SizedBox(
+                width: 18.w,
+                height: 18.w,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: AppTheme.primaryColor,
+                ),
+              ),
+            ),
+        ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
-              padding: EdgeInsets.all(16.w),
+              padding: EdgeInsets.symmetric(
+                  horizontal: 16.w, vertical: 8.h),
               children: [
-                _buildSection('Account'),
-                _buildListTile(
-                  icon: Icons.person,
-                  title: 'Profile',
-                  subtitle: 'Edit your profile information',
-                  onTap: () => _showEditProfileDialog(),
-                ),
-                _buildListTile(
-                  icon: Icons.workspace_premium,
-                  title: 'Subscription',
-                  subtitle: 'Manage your subscription',
-                  onTap: () => _showSubscriptionDialog(),
-                ),
-                _buildListTile(
-                  icon: Icons.payment,
-                  title: 'Payment History',
-                  subtitle: 'View your payment history',
-                  onTap: () => _showPaymentHistory(),
-                ),
-
+                // ── Profile card ──────────────────────────────────────
+                _buildProfileCard(),
                 SizedBox(height: 24.h),
 
-                _buildSection('Default Video Settings'),
-                _buildListTile(
-                  icon: Icons.category,
-                  title: 'Default Niche',
-                  subtitle: _settings?.defaultNiche ?? 'General',
-                  onTap: () => _showNicheSelector(),
-                ),
-                _buildListTile(
-                  icon: Icons.timer,
-                  title: 'Default Duration',
-                  subtitle: '${_settings?.defaultVideoLength ?? 30} seconds',
-                  onTap: () => _showDurationSelector(),
-                ),
-                _buildListTile(
-                  icon: Icons.aspect_ratio,
-                  title: 'Default Aspect Ratio',
-                  subtitle: _settings?.defaultAspectRatio ?? '9:16',
-                  onTap: () => _showAspectRatioSelector(),
-                ),
-                _buildListTile(
-                  icon: Icons.style,
-                  title: 'Default Style',
-                  subtitle: _settings?.defaultStyle ?? 'Cinematic',
-                  onTap: () => _showStyleSelector(),
-                ),
-
-                SizedBox(height: 24.h),
-
-                _buildSection('Caption Settings'),
-                SwitchListTile(
-                  secondary: const Icon(Icons.closed_caption),
-                  title: const Text('Enable Captions'),
-                  subtitle: const Text('Show captions by default'),
-                  value: _settings?.captionsEnabled ?? true,
-                  onChanged: (value) {
-                    if (_settings != null) {
-                      _updateSettings(_settings!.copyWith(captionsEnabled: value));
-                    }
-                  },
-                ),
-                _buildListTile(
-                  icon: Icons.text_fields,
-                  title: 'Caption Style',
-                  subtitle: _settings?.captionStyle ?? 'Modern',
-                  onTap: () => _showCaptionStyleSelector(),
-                ),
-                SwitchListTile(
-                  secondary: const Icon(Icons.emoji_emotions),
-                  title: const Text('Emoji in Captions'),
-                  subtitle: const Text('Include emojis in captions'),
-                  value: _settings?.captionEmojiEnabled ?? true,
-                  onChanged: (value) {
-                    if (_settings != null) {
-                      _updateSettings(_settings!.copyWith(captionEmojiEnabled: value));
-                    }
-                  },
-                ),
-
-                SizedBox(height: 24.h),
-
-                _buildSection('Music Settings'),
-                SwitchListTile(
-                  secondary: const Icon(Icons.music_note),
-                  title: const Text('Background Music'),
-                  subtitle: const Text('Add music to videos by default'),
-                  value: _settings?.backgroundMusicEnabled ?? true,
-                  onChanged: (value) {
-                    if (_settings != null) {
-                      _updateSettings(_settings!.copyWith(backgroundMusicEnabled: value));
-                    }
-                  },
-                ),
-                _buildListTile(
-                  icon: Icons.audiotrack,
-                  title: 'Music Style',
-                  subtitle: _settings?.backgroundMusicStyle ?? 'Upbeat',
-                  onTap: () => _showMusicStyleSelector(),
-                ),
-
-                SizedBox(height: 24.h),
-
-                _buildSection('Notifications'),
-                SwitchListTile(
-                  secondary: const Icon(Icons.email),
-                  title: const Text('Email Notifications'),
-                  value: _settings?.emailNotificationsEnabled ?? true,
-                  onChanged: (value) {
-                    if (_settings != null) {
-                      _updateSettings(_settings!.copyWith(emailNotificationsEnabled: value));
-                    }
-                  },
-                ),
-                SwitchListTile(
-                  secondary: const Icon(Icons.notifications),
-                  title: const Text('Push Notifications'),
-                  value: _settings?.pushNotificationsEnabled ?? true,
-                  onChanged: (value) {
-                    if (_settings != null) {
-                      _updateSettings(_settings!.copyWith(pushNotificationsEnabled: value));
-                    }
-                  },
-                ),
-                SwitchListTile(
-                  secondary: const Icon(Icons.check_circle),
-                  title: const Text('Video Complete'),
-                  subtitle: const Text('Notify when video generation completes'),
-                  value: _settings?.notifyOnVideoComplete ?? true,
-                  onChanged: (value) {
-                    if (_settings != null) {
-                      _updateSettings(_settings!.copyWith(notifyOnVideoComplete: value));
-                    }
-                  },
-                ),
-
-                SizedBox(height: 24.h),
-
-                _buildSection('Privacy & Security'),
-                _buildListTile(
-                  icon: Icons.lock,
-                  title: 'Change Password',
-                  subtitle: 'Update your password',
-                  onTap: () => _showChangePasswordDialog(),
-                ),
-                _buildListTile(
-                  icon: Icons.download,
-                  title: 'Export Data',
-                  subtitle: 'Download all your data',
-                  onTap: () => _showExportDataDialog(),
-                ),
-                _buildListTile(
-                  icon: Icons.delete_forever,
-                  title: 'Delete Account',
-                  subtitle: 'Permanently delete your account',
-                  onTap: () => _showDeleteAccountConfirmation(),
-                  textColor: Colors.red,
-                ),
-
-                SizedBox(height: 24.h),
-
-                _buildSection('About'),
-                _buildListTile(
-                  icon: Icons.info,
-                  title: 'About chAs AI Creator',
-                  subtitle: 'Version 1.0.0 — Made by chAs',
-                  onTap: () => _showAboutDialog(),
-                ),
-                _buildListTile(
-                  icon: Icons.privacy_tip,
-                  title: 'Privacy Policy',
-                  onTap: () => _showPrivacyPolicy(),
-                ),
-                _buildListTile(
-                  icon: Icons.description,
-                  title: 'Terms of Service',
-                  onTap: () => _showTermsOfService(),
-                ),
-
-                SizedBox(height: 24.h),
-
-                ElevatedButton.icon(
-                  onPressed: () => _showLogoutConfirmation(),
-                  icon: const Icon(Icons.logout),
-                  label: const Text('Logout'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
-                    foregroundColor: Colors.white,
-                    padding: EdgeInsets.symmetric(vertical: 16.h),
+                // ── Account ───────────────────────────────────────────
+                _buildSectionHeader('🔐 Account'),
+                _buildCard([
+                  _buildTile(
+                    icon: Icons.person_outline,
+                    title: 'Edit Profile',
+                    subtitle: _user?.displayName ?? _user?.email ?? '',
+                    onTap: _showEditProfileDialog,
                   ),
-                ),
+                  _buildDivider(),
+                  _buildTile(
+                    icon: Icons.workspace_premium_outlined,
+                    title: 'Subscription',
+                    subtitle: _subscriptionLabel(),
+                    trailingWidget: _buildTierBadge(),
+                    onTap: _showSubscriptionDialog,
+                  ),
+                  _buildDivider(),
+                  _buildTile(
+                    icon: Icons.receipt_long_outlined,
+                    title: 'Payment History',
+                    onTap: _showPaymentHistory,
+                  ),
+                  _buildDivider(),
+                  _buildTile(
+                    icon: Icons.lock_outline,
+                    title: 'Change Password',
+                    onTap: _showChangePasswordDialog,
+                  ),
+                ]),
 
-                SizedBox(height: 32.h),
+                SizedBox(height: 24.h),
+
+                // ── Default video settings ────────────────────────────
+                _buildSectionHeader('🎬 Default Video Settings'),
+                _buildCard([
+                  _buildTile(
+                    icon: Icons.aspect_ratio,
+                    title: 'Aspect Ratio',
+                    subtitle: _settings?.defaultAspectRatio ?? '9:16',
+                    onTap: () => _showOptionsDialog(
+                      title: 'Default Aspect Ratio',
+                      options: const ['9:16', '16:9', '1:1'],
+                      selected: _settings?.defaultAspectRatio ?? '9:16',
+                      onSelected: (v) => _updateSettings(
+                          _settings!.copyWith(defaultAspectRatio: v)),
+                    ),
+                  ),
+                  _buildDivider(),
+                  _buildTile(
+                    icon: Icons.timer_outlined,
+                    title: 'Default Duration',
+                    subtitle:
+                        '${_settings?.defaultVideoLength ?? 30} seconds',
+                    onTap: _showDurationSelector,
+                  ),
+                  _buildDivider(),
+                  _buildTile(
+                    icon: Icons.style_outlined,
+                    title: 'Visual Style',
+                    subtitle: _capitalize(
+                        _settings?.defaultStyle ?? 'cinematic'),
+                    onTap: () => _showOptionsDialog(
+                      title: 'Default Visual Style',
+                      options: const [
+                        'cinematic', 'realistic', 'cartoon',
+                        'dramatic', 'minimal', 'funny'
+                      ],
+                      selected: _settings?.defaultStyle ?? 'cinematic',
+                      onSelected: (v) => _updateSettings(
+                          _settings!.copyWith(defaultStyle: v)),
+                    ),
+                  ),
+                  _buildDivider(),
+                  _buildTile(
+                    icon: Icons.category_outlined,
+                    title: 'Default Niche',
+                    subtitle:
+                        _capitalize(_settings?.defaultNiche ?? 'general'),
+                    onTap: () => _showOptionsDialog(
+                      title: 'Default Niche',
+                      options: const [
+                        'general', 'fitness', 'cooking', 'travel',
+                        'tech', 'fashion', 'finance', 'education',
+                        'motivation', 'gaming', 'music', 'business',
+                        'science', 'nature', 'comedy',
+                      ],
+                      selected: _settings?.defaultNiche ?? 'general',
+                      onSelected: (v) => _updateSettings(
+                          _settings!.copyWith(defaultNiche: v)),
+                    ),
+                  ),
+                ]),
+
+                SizedBox(height: 24.h),
+
+                // ── Audio settings ────────────────────────────────────
+                _buildSectionHeader('🎙️ Audio & Voice'),
+                _buildCard([
+                  _buildTile(
+                    icon: Icons.record_voice_over_outlined,
+                    title: 'Default Audio Mode',
+                    subtitle: _capitalize(
+                        _settings?.defaultAudioMode ?? 'narration'),
+                    onTap: () => _showOptionsDialog(
+                      title: 'Default Audio Mode',
+                      options: const [
+                        'silent', 'narration', 'soundSync'
+                      ],
+                      labels: const [
+                        'Silent (Music only)',
+                        'AI Narration (Voiceover)',
+                        'Sound Sync (Realistic sounds)',
+                      ],
+                      selected:
+                          _settings?.defaultAudioMode ?? 'narration',
+                      onSelected: (v) => _updateSettings(
+                          _settings!.copyWith(defaultAudioMode: v)),
+                    ),
+                  ),
+                  _buildDivider(),
+                  _buildTile(
+                    icon: Icons.mic_outlined,
+                    title: 'Voice Style',
+                    subtitle: _capitalize(
+                        _settings?.defaultVoiceStyle ?? 'professional'),
+                    onTap: () => _showOptionsDialog(
+                      title: 'Voice Style',
+                      options: const [
+                        'professional', 'friendly', 'dramatic',
+                        'energetic', 'calm', 'authoritative'
+                      ],
+                      selected:
+                          _settings?.defaultVoiceStyle ?? 'professional',
+                      onSelected: (v) => _updateSettings(
+                          _settings!.copyWith(defaultVoiceStyle: v)),
+                    ),
+                  ),
+                  _buildDivider(),
+                  _buildTile(
+                    icon: Icons.music_note_outlined,
+                    title: 'Music Style',
+                    subtitle: _capitalize(
+                        _settings?.backgroundMusicStyle ?? 'upbeat'),
+                    onTap: () => _showOptionsDialog(
+                      title: 'Background Music Style',
+                      options: const [
+                        'upbeat', 'calm', 'dramatic',
+                        'inspirational', 'epic', 'lofi', 'none'
+                      ],
+                      selected:
+                          _settings?.backgroundMusicStyle ?? 'upbeat',
+                      onSelected: (v) => _updateSettings(
+                          _settings!.copyWith(backgroundMusicStyle: v)),
+                    ),
+                  ),
+                  _buildDivider(),
+                  _buildSwitch(
+                    icon: Icons.music_note,
+                    title: 'Background Music',
+                    subtitle: 'Add music to all videos by default',
+                    value: _settings?.backgroundMusicEnabled ?? true,
+                    onChanged: (v) => _updateSettings(
+                        _settings!.copyWith(backgroundMusicEnabled: v)),
+                  ),
+                ]),
+
+                SizedBox(height: 24.h),
+
+                // ── Caption settings ──────────────────────────────────
+                _buildSectionHeader('💬 Captions'),
+                _buildCard([
+                  _buildSwitch(
+                    icon: Icons.closed_caption_outlined,
+                    title: 'Enable Captions',
+                    subtitle: 'Show captions on all videos by default',
+                    value: _settings?.captionsEnabled ?? true,
+                    onChanged: (v) => _updateSettings(
+                        _settings!.copyWith(captionsEnabled: v)),
+                  ),
+                  _buildDivider(),
+                  _buildTile(
+                    icon: Icons.text_fields,
+                    title: 'Caption Style',
+                    subtitle:
+                        _capitalize(_settings?.captionStyle ?? 'modern'),
+                    onTap: () => _showOptionsDialog(
+                      title: 'Caption Style',
+                      options: const [
+                        'modern', 'classic', 'bold', 'minimal', 'fun'
+                      ],
+                      selected: _settings?.captionStyle ?? 'modern',
+                      onSelected: (v) => _updateSettings(
+                          _settings!.copyWith(captionStyle: v)),
+                    ),
+                  ),
+                  _buildDivider(),
+                  _buildSwitch(
+                    icon: Icons.emoji_emotions_outlined,
+                    title: 'Emoji in Captions',
+                    subtitle: 'Include emojis in caption text',
+                    value: _settings?.captionEmojiEnabled ?? true,
+                    onChanged: (v) => _updateSettings(
+                        _settings!.copyWith(captionEmojiEnabled: v)),
+                  ),
+                ]),
+
+                SizedBox(height: 24.h),
+
+                // ── Platform defaults ─────────────────────────────────
+                _buildSectionHeader('📱 Default Platforms'),
+                _buildCard([
+                  _buildPlatformSelector(),
+                ]),
+
+                SizedBox(height: 24.h),
+
+                // ── Character consistency ─────────────────────────────
+                _buildSectionHeader('🎭 AI Generation'),
+                _buildCard([
+                  _buildSwitch(
+                    icon: Icons.face_retouching_natural,
+                    title: 'Character Consistency',
+                    subtitle:
+                        'Keep characters the same across all scenes',
+                    value:
+                        _settings?.characterConsistencyEnabled ?? false,
+                    onChanged: (v) => _updateSettings(_settings!
+                        .copyWith(characterConsistencyEnabled: v)),
+                  ),
+                ]),
+
+                SizedBox(height: 24.h),
+
+                // ── Notifications ─────────────────────────────────────
+                _buildSectionHeader('🔔 Notifications'),
+                _buildCard([
+                  _buildSwitch(
+                    icon: Icons.notifications_outlined,
+                    title: 'Push Notifications',
+                    value: _settings?.pushNotificationsEnabled ?? true,
+                    onChanged: (v) => _updateSettings(_settings!
+                        .copyWith(pushNotificationsEnabled: v)),
+                  ),
+                  _buildDivider(),
+                  _buildSwitch(
+                    icon: Icons.email_outlined,
+                    title: 'Email Notifications',
+                    value: _settings?.emailNotificationsEnabled ?? true,
+                    onChanged: (v) => _updateSettings(_settings!
+                        .copyWith(emailNotificationsEnabled: v)),
+                  ),
+                  _buildDivider(),
+                  _buildSwitch(
+                    icon: Icons.check_circle_outline,
+                    title: 'Video Complete Alert',
+                    subtitle: 'Notify when a video finishes generating',
+                    value: _settings?.notifyOnVideoComplete ?? true,
+                    onChanged: (v) => _updateSettings(
+                        _settings!.copyWith(notifyOnVideoComplete: v)),
+                  ),
+                ]),
+
+                SizedBox(height: 24.h),
+
+                // ── Privacy ───────────────────────────────────────────
+                _buildSectionHeader('🔒 Privacy & Security'),
+                _buildCard([
+                  _buildTile(
+                    icon: Icons.download_outlined,
+                    title: 'Export My Data',
+                    subtitle: 'Download all your videos and data',
+                    onTap: _showExportDataDialog,
+                  ),
+                  _buildDivider(),
+                  _buildTile(
+                    icon: Icons.delete_forever_outlined,
+                    title: 'Delete Account',
+                    subtitle: 'Permanently delete your account',
+                    textColor: Colors.red,
+                    onTap: _showDeleteAccountDialog,
+                  ),
+                ]),
+
+                SizedBox(height: 24.h),
+
+                // ── About ─────────────────────────────────────────────
+                _buildSectionHeader('ℹ️ About'),
+                _buildCard([
+                  _buildTile(
+                    icon: Icons.info_outline,
+                    title: 'About chAs AI Creator',
+                    subtitle: 'Version 1.0.0',
+                    onTap: _showAboutDialog,
+                  ),
+                  _buildDivider(),
+                  _buildTile(
+                    icon: Icons.privacy_tip_outlined,
+                    title: 'Privacy Policy',
+                    onTap: _showPrivacyPolicy,
+                  ),
+                  _buildDivider(),
+                  _buildTile(
+                    icon: Icons.description_outlined,
+                    title: 'Terms of Service',
+                    onTap: _showTermsOfService,
+                  ),
+                  _buildDivider(),
+                  _buildTile(
+                    icon: Icons.support_agent_outlined,
+                    title: 'Contact Support',
+                    onTap: _showContactSupport,
+                  ),
+                ]),
+
+                SizedBox(height: 24.h),
+
+                // ── Logout ────────────────────────────────────────────
+                _buildLogoutButton(),
+
+                SizedBox(height: 40.h),
               ],
             ),
     );
   }
 
-  Widget _buildSection(String title) {
-    return Padding(
-      padding: EdgeInsets.only(left: 16.w, bottom: 8.h),
+  // ─────────────────────────────────────────────────────────────────────────
+  // PROFILE CARD
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildProfileCard() {
+    return GestureDetector(
+      onTap: _showEditProfileDialog,
+      child: Container(
+        padding: EdgeInsets.all(20.w),
+        decoration: BoxDecoration(
+          gradient: AppTheme.primaryGradient,
+          borderRadius: BorderRadius.circular(20.r),
+        ),
+        child: Row(
+          children: [
+            // Avatar
+            Container(
+              width: 60.w,
+              height: 60.w,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white38, width: 2),
+              ),
+              child: _user?.avatarUrl != null
+                  ? ClipOval(
+                      child: Image.network(
+                        _user!.avatarUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            _buildAvatarFallback(),
+                      ),
+                    )
+                  : _buildAvatarFallback(),
+            ),
+
+            SizedBox(width: 16.w),
+
+            // Info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _user?.displayName ?? 'Creator',
+                    style: TextStyle(
+                      fontSize: 17.sp,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  SizedBox(height: 3.h),
+                  Text(
+                    _user?.email ?? '',
+                    style: TextStyle(
+                        fontSize: 12.sp, color: Colors.white70),
+                  ),
+                  SizedBox(height: 8.h),
+                  _buildTierBadge(light: true),
+                ],
+              ),
+            ),
+
+            Icon(Icons.edit_outlined, color: Colors.white70, size: 18.w),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAvatarFallback() {
+    final name = _user?.displayName ?? _user?.email ?? 'C';
+    return Center(
       child: Text(
-        title,
-        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-          color: AppTheme.primaryColor,
+        name[0].toUpperCase(),
+        style: TextStyle(
+          fontSize: 24.sp,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTierBadge({bool light = false}) {
+    final tier = _user?.subscriptionTier ?? 'free';
+    final color = switch (tier.toLowerCase()) {
+      'pro'   => Colors.amber,
+      'basic' => Colors.blue,
+      _       => light ? Colors.white54 : Colors.grey,
+    };
+    final label = switch (tier.toLowerCase()) {
+      'pro'   => '⭐ PRO',
+      'basic' => '🔵 BASIC',
+      _       => '🆓 FREE',
+    };
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 4.h),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(20.r),
+        border: Border.all(color: color.withOpacity(0.4)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11.sp,
+          color: light ? Colors.white : color,
           fontWeight: FontWeight.w600,
         ),
       ),
     );
   }
 
-  Widget _buildListTile({
-    required IconData icon,
-    required String title,
-    String? subtitle,
-    required VoidCallback onTap,
-    Color? textColor,
-  }) {
-    return ListTile(
-      leading: Icon(icon),
-      title: Text(
-        title,
-        style: textColor != null ? TextStyle(color: textColor) : null,
-      ),
-      subtitle: subtitle != null ? Text(subtitle) : null,
-      trailing: const Icon(Icons.chevron_right),
-      onTap: onTap,
-    );
+  String _subscriptionLabel() {
+    final tier = _user?.subscriptionTier ?? 'free';
+    return switch (tier.toLowerCase()) {
+      'pro'   => 'Pro Plan — all features unlocked',
+      'basic' => 'Basic Plan — 10 videos/day',
+      _       => 'Free Plan — 2 videos/day',
+    };
   }
 
-  void _showOptionsDialog({
-    required String title,
-    required List<String> options,
-    required String selected,
-    required Function(String) onSelected,
-  }) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: options.length,
-            itemBuilder: (context, index) {
-              final option = options[index];
-              final isSelected = selected == option;
-              return ListTile(
-                title: Text(option[0].toUpperCase() + option.substring(1)),
-                trailing: isSelected
-                    ? Icon(Icons.check, color: AppTheme.primaryColor)
-                    : null,
-                onTap: () {
-                  Navigator.pop(context);
-                  onSelected(option);
-                },
-              );
-            },
+  // ─────────────────────────────────────────────────────────────────────────
+  // PLATFORM SELECTOR
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildPlatformSelector() {
+    final platforms = {
+      'tiktok':    ('🎵', 'TikTok'),
+      'youtube':   ('▶️', 'YouTube'),
+      'instagram': ('📸', 'Instagram'),
+      'facebook':  ('👤', 'Facebook'),
+      'twitter':   ('🐦', 'X / Twitter'),
+      'linkedin':  ('💼', 'LinkedIn'),
+    };
+
+    final selected = Set<String>.from(
+        _settings?.defaultTargetPlatforms ?? ['tiktok']);
+
+    return Padding(
+      padding: EdgeInsets.all(16.w),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Default platforms for hashtag & format optimization',
+            style: TextStyle(fontSize: 12.sp, color: Colors.grey),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+          SizedBox(height: 12.h),
+          Wrap(
+            spacing: 8.w,
+            runSpacing: 8.h,
+            children: platforms.entries.map((e) {
+              final isSelected = selected.contains(e.key);
+              return GestureDetector(
+                onTap: () {
+                  final updated = Set<String>.from(selected);
+                  if (isSelected) {
+                    if (updated.length > 1) updated.remove(e.key);
+                  } else {
+                    updated.add(e.key);
+                  }
+                  _updateSettings(_settings!.copyWith(
+                    defaultTargetPlatforms: updated.toList(),
+                  ));
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding: EdgeInsets.symmetric(
+                      horizontal: 12.w, vertical: 8.h),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? AppTheme.primaryColor.withOpacity(0.12)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(20.r),
+                    border: Border.all(
+                      color: isSelected
+                          ? AppTheme.primaryColor
+                          : Colors.grey.withOpacity(0.3),
+                      width: isSelected ? 1.5 : 1,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(e.value.$1,
+                          style: TextStyle(fontSize: 14.sp)),
+                      SizedBox(width: 6.w),
+                      Text(
+                        e.value.$2,
+                        style: TextStyle(
+                          fontSize: 12.sp,
+                          color: isSelected
+                              ? AppTheme.primaryColor
+                              : Colors.grey,
+                          fontWeight: isSelected
+                              ? FontWeight.w600
+                              : FontWeight.normal,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
           ),
         ],
       ),
     );
   }
 
-  void _showNicheSelector() {
-    _showOptionsDialog(
-      title: 'Default Niche',
-      options: ['general', 'fitness', 'cooking', 'travel', 'tech', 'fashion', 'finance', 'education', 'entertainment', 'news'],
-      selected: _settings?.defaultNiche ?? 'general',
-      onSelected: (value) {
-        if (_settings != null) {
-          _updateSettings(_settings!.copyWith(defaultNiche: value));
-        }
-      },
+  // ─────────────────────────────────────────────────────────────────────────
+  // BUILDING BLOCKS
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildSectionHeader(String title) {
+    return Padding(
+      padding: EdgeInsets.only(left: 4.w, bottom: 10.h),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 13.sp,
+          fontWeight: FontWeight.w700,
+          color: AppTheme.primaryColor,
+          letterSpacing: 0.3,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCard(List<Widget> children) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(16.r),
+        border: Border.all(
+          color: Colors.grey.withOpacity(0.1),
+        ),
+      ),
+      child: Column(children: children),
+    );
+  }
+
+  Widget _buildTile({
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    Widget? trailingWidget,
+    required VoidCallback onTap,
+    Color? textColor,
+  }) {
+    return ListTile(
+      contentPadding:
+          EdgeInsets.symmetric(horizontal: 16.w, vertical: 2.h),
+      leading: Container(
+        width: 36.w,
+        height: 36.w,
+        decoration: BoxDecoration(
+          color: (textColor ?? AppTheme.primaryColor).withOpacity(0.1),
+          borderRadius: BorderRadius.circular(10.r),
+        ),
+        child: Icon(icon,
+            size: 18.w,
+            color: textColor ?? AppTheme.primaryColor),
+      ),
+      title: Text(
+        title,
+        style: TextStyle(
+          fontSize: 14.sp,
+          fontWeight: FontWeight.w500,
+          color: textColor,
+        ),
+      ),
+      subtitle: subtitle != null
+          ? Text(
+              subtitle,
+              style: TextStyle(
+                  fontSize: 12.sp, color: Colors.grey),
+            )
+          : null,
+      trailing: trailingWidget ??
+          Icon(Icons.chevron_right,
+              size: 18.w, color: Colors.grey),
+      onTap: onTap,
+    );
+  }
+
+  Widget _buildSwitch({
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return SwitchListTile(
+      contentPadding:
+          EdgeInsets.symmetric(horizontal: 16.w, vertical: 2.h),
+      secondary: Container(
+        width: 36.w,
+        height: 36.w,
+        decoration: BoxDecoration(
+          color: AppTheme.primaryColor.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(10.r),
+        ),
+        child:
+            Icon(icon, size: 18.w, color: AppTheme.primaryColor),
+      ),
+      title: Text(title,
+          style: TextStyle(
+              fontSize: 14.sp, fontWeight: FontWeight.w500)),
+      subtitle: subtitle != null
+          ? Text(subtitle,
+              style: TextStyle(
+                  fontSize: 12.sp, color: Colors.grey))
+          : null,
+      value: value,
+      onChanged: onChanged,
+    );
+  }
+
+  Widget _buildDivider() => Divider(
+        height: 1,
+        indent: 68.w,
+        color: Colors.grey.withOpacity(0.1),
+      );
+
+  Widget _buildLogoutButton() {
+    return GestureDetector(
+      onTap: _showLogoutDialog,
+      child: Container(
+        padding: EdgeInsets.symmetric(vertical: 16.h),
+        decoration: BoxDecoration(
+          color: Colors.red.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(16.r),
+          border: Border.all(color: Colors.red.withOpacity(0.2)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.logout, color: Colors.red, size: 20.w),
+            SizedBox(width: 10.w),
+            Text(
+              'Log Out',
+              style: TextStyle(
+                fontSize: 15.sp,
+                color: Colors.red,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // DIALOGS
+  // ─────────────────────────────────────────────────────────────────────────
+
+  void _showOptionsDialog({
+    required String title,
+    required List<String> options,
+    List<String>? labels,
+    required String selected,
+    required Function(String) onSelected,
+  }) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Container(
+        padding: EdgeInsets.all(20.w),
+        decoration: BoxDecoration(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          borderRadius:
+              BorderRadius.vertical(top: Radius.circular(20.r)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 36.w,
+                height: 4.h,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2.r),
+                ),
+              ),
+            ),
+            SizedBox(height: 16.h),
+            Text(title,
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.bold)),
+            SizedBox(height: 12.h),
+            ...options.asMap().entries.map((entry) {
+              final opt = entry.value;
+              final label = labels?[entry.key] ?? _capitalize(opt);
+              final isSelected = opt == selected;
+              return ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(label,
+                    style: TextStyle(
+                      fontSize: 14.sp,
+                      color: isSelected
+                          ? AppTheme.primaryColor
+                          : null,
+                      fontWeight: isSelected
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    )),
+                trailing: isSelected
+                    ? Icon(Icons.check,
+                        color: AppTheme.primaryColor, size: 18.w)
+                    : null,
+                onTap: () {
+                  Navigator.pop(context);
+                  onSelected(opt);
+                },
+              );
+            }),
+            SizedBox(height: 8.h),
+          ],
+        ),
+      ),
     );
   }
 
   void _showDurationSelector() {
     final durations = [10, 15, 20, 30, 45, 60, 90, 120];
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Default Duration'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: durations.length,
-            itemBuilder: (context, index) {
-              final d = durations[index];
-              final isSelected = (_settings?.defaultVideoLength ?? 30) == d;
-              return ListTile(
-                title: Text('$d seconds'),
-                trailing: isSelected
-                    ? Icon(Icons.check, color: AppTheme.primaryColor)
-                    : null,
-                onTap: () {
-                  Navigator.pop(context);
-                  if (_settings != null) {
-                    _updateSettings(_settings!.copyWith(defaultVideoLength: d));
-                  }
-                },
-              );
-            },
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAspectRatioSelector() {
     _showOptionsDialog(
-      title: 'Default Aspect Ratio',
-      options: ['9:16', '16:9', '1:1'],
-      selected: _settings?.defaultAspectRatio ?? '9:16',
-      onSelected: (value) {
-        if (_settings != null) {
-          _updateSettings(_settings!.copyWith(defaultAspectRatio: value));
-        }
-      },
-    );
-  }
-
-  void _showStyleSelector() {
-    _showOptionsDialog(
-      title: 'Default Style',
-      options: ['cinematic', 'anime', 'realistic', 'cartoon', 'minimalist'],
-      selected: _settings?.defaultStyle ?? 'cinematic',
-      onSelected: (value) {
-        if (_settings != null) {
-          _updateSettings(_settings!.copyWith(defaultStyle: value));
-        }
-      },
-    );
-  }
-
-  void _showCaptionStyleSelector() {
-    _showOptionsDialog(
-      title: 'Caption Style',
-      options: ['modern', 'classic', 'bold', 'minimal', 'neon'],
-      selected: _settings?.captionStyle ?? 'modern',
-      onSelected: (value) {
-        if (_settings != null) {
-          _updateSettings(_settings!.copyWith(captionStyle: value));
-        }
-      },
-    );
-  }
-
-  void _showMusicStyleSelector() {
-    _showOptionsDialog(
-      title: 'Music Style',
-      options: ['upbeat', 'calm', 'dramatic', 'inspirational', 'none'],
-      selected: _settings?.backgroundMusicStyle ?? 'upbeat',
-      onSelected: (value) {
-        if (_settings != null) {
-          _updateSettings(_settings!.copyWith(backgroundMusicStyle: value));
-        }
-      },
+      title: 'Default Duration',
+      options: durations.map((d) => '$d').toList(),
+      labels: durations.map((d) => '$d seconds').toList(),
+      selected: '${_settings?.defaultVideoLength ?? 30}',
+      onSelected: (v) => _updateSettings(
+          _settings!.copyWith(defaultVideoLength: int.parse(v))),
     );
   }
 
   void _showEditProfileDialog() {
-    final nameController = TextEditingController();
-    showDialog(
+    final nameController = TextEditingController(
+      text: _user?.displayName ?? '',
+    );
+    final bioController = TextEditingController(
+      text: _user?.bio ?? '',
+    );
+
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Edit Profile'),
-        content: TextField(
-          controller: nameController,
-          decoration: const InputDecoration(
-            labelText: 'Display Name',
-            border: OutlineInputBorder(),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Container(
+          padding: EdgeInsets.all(24.w),
+          decoration: BoxDecoration(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            borderRadius:
+                BorderRadius.vertical(top: Radius.circular(24.r)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Edit Profile',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.bold)),
+              SizedBox(height: 20.h),
+              TextField(
+                controller: nameController,
+                decoration: InputDecoration(
+                  labelText: 'Display Name',
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12.r)),
+                  prefixIcon: const Icon(Icons.person_outline),
+                ),
+              ),
+              SizedBox(height: 14.h),
+              TextField(
+                controller: bioController,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  labelText: 'Bio (optional)',
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12.r)),
+                  prefixIcon: const Icon(Icons.info_outline),
+                ),
+              ),
+              SizedBox(height: 20.h),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    try {
+                      final updated = await _apiService.updateProfile(
+                        displayName: nameController.text.trim(),
+                        bio: bioController.text.trim(),
+                      );
+                      setState(() => _user = updated);
+                      _showToast('✅ Profile updated!');
+                    } catch (e) {
+                      _showToast(_apiService.handleError(e), error: true);
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    padding: EdgeInsets.symmetric(vertical: 14.h),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12.r)),
+                  ),
+                  child: const Text('Save Changes'),
+                ),
+              ),
+              SizedBox(height: 8.h),
+            ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              try {
-                await _apiService.updateProfile(displayName: nameController.text);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Profile updated!')),
-                );
-              } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Failed: $e')),
-                );
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
       ),
     );
   }
 
   void _showChangePasswordDialog() {
-    final currentController = TextEditingController();
-    final newController = TextEditingController();
-    final confirmController = TextEditingController();
-    showDialog(
+    final currentCtrl = TextEditingController();
+    final newCtrl = TextEditingController();
+    final confirmCtrl = TextEditingController();
+
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Change Password'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: currentController,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'Current Password',
-                border: OutlineInputBorder(),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Padding(
+        padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: Container(
+          padding: EdgeInsets.all(24.w),
+          decoration: BoxDecoration(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            borderRadius:
+                BorderRadius.vertical(top: Radius.circular(24.r)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Change Password',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.bold)),
+              SizedBox(height: 20.h),
+              _buildPasswordField(currentCtrl, 'Current Password'),
+              SizedBox(height: 12.h),
+              _buildPasswordField(newCtrl, 'New Password'),
+              SizedBox(height: 12.h),
+              _buildPasswordField(confirmCtrl, 'Confirm New Password'),
+              SizedBox(height: 20.h),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    if (newCtrl.text != confirmCtrl.text) {
+                      _showToast('❌ Passwords do not match',
+                          error: true);
+                      return;
+                    }
+                    if (newCtrl.text.length < 8) {
+                      _showToast(
+                          '❌ New password must be at least 8 characters',
+                          error: true);
+                      return;
+                    }
+                    Navigator.pop(context);
+                    _showToast('✅ Password changed successfully!');
+                  },
+                  style: ElevatedButton.styleFrom(
+                    padding: EdgeInsets.symmetric(vertical: 14.h),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12.r)),
+                  ),
+                  child: const Text('Update Password'),
+                ),
               ),
-            ),
-            SizedBox(height: 12.h),
-            TextField(
-              controller: newController,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'New Password',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            SizedBox(height: 12.h),
-            TextField(
-              controller: confirmController,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'Confirm New Password',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
+              SizedBox(height: 8.h),
+            ],
+          ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (newController.text != confirmController.text) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Passwords do not match')),
-                );
-                return;
-              }
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Password changed successfully!')),
-              );
-            },
-            child: const Text('Update'),
-          ),
-        ],
+      ),
+    );
+  }
+
+  Widget _buildPasswordField(
+      TextEditingController ctrl, String label) {
+    return TextField(
+      controller: ctrl,
+      obscureText: true,
+      decoration: InputDecoration(
+        labelText: label,
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12.r)),
+        prefixIcon: const Icon(Icons.lock_outline),
       ),
     );
   }
 
   void _showSubscriptionDialog() {
-    showDialog(
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Subscription'),
-        content: Column(
+      backgroundColor: Colors.transparent,
+      builder: (_) => Container(
+        padding: EdgeInsets.all(24.w),
+        decoration: BoxDecoration(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          borderRadius:
+              BorderRadius.vertical(top: Radius.circular(24.r)),
+        ),
+        child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Current Plan: FREE'),
-            SizedBox(height: 16.h),
-            const Text('Upgrade to PRO for:'),
+            Text('Subscription Plans',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.bold)),
+            SizedBox(height: 20.h),
+            _buildPlanCard('🆓 Free',
+                ['2 videos/day', '30s max', 'Basic quality'], false),
+            SizedBox(height: 10.h),
+            _buildPlanCard(
+                '🔵 Basic',
+                ['10 videos/day', '60s max', 'HD quality', 'No watermark'],
+                false),
+            SizedBox(height: 10.h),
+            _buildPlanCard(
+                '⭐ Pro',
+                [
+                  '50 videos/day',
+                  '5 min max',
+                  '4K quality',
+                  'Priority generation',
+                  'All AI features'
+                ],
+                true),
+            SizedBox(height: 20.h),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _showToast('🚀 Redirecting to upgrade...');
+                },
+                style: ElevatedButton.styleFrom(
+                  padding: EdgeInsets.symmetric(vertical: 14.h),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12.r)),
+                ),
+                child: const Text('Upgrade Now'),
+              ),
+            ),
             SizedBox(height: 8.h),
-            const Text('✅ 20 videos per day'),
-            const Text('✅ Up to 2 minutes per video'),
-            const Text('✅ Priority generation'),
-            const Text('✅ No ads'),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Maybe Later'),
+      ),
+    );
+  }
+
+  Widget _buildPlanCard(
+      String name, List<String> features, bool highlighted) {
+    return Container(
+      padding: EdgeInsets.all(14.w),
+      decoration: BoxDecoration(
+        color: highlighted
+            ? AppTheme.primaryColor.withOpacity(0.1)
+            : Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(14.r),
+        border: Border.all(
+          color: highlighted
+              ? AppTheme.primaryColor
+              : Colors.grey.withOpacity(0.2),
+          width: highlighted ? 1.5 : 1,
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name,
+                    style: TextStyle(
+                      fontSize: 15.sp,
+                      fontWeight: FontWeight.bold,
+                      color: highlighted
+                          ? AppTheme.primaryColor
+                          : null,
+                    )),
+                SizedBox(height: 6.h),
+                ...features.map((f) => Padding(
+                      padding: EdgeInsets.only(top: 2.h),
+                      child: Text('✓ $f',
+                          style: TextStyle(
+                              fontSize: 12.sp,
+                              color: Colors.grey)),
+                    )),
+              ],
+            ),
           ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Redirecting to payment...')),
-              );
-            },
-            child: const Text('Upgrade Now'),
-          ),
+          if (highlighted)
+            Container(
+              padding: EdgeInsets.symmetric(
+                  horizontal: 8.w, vertical: 4.h),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryColor,
+                borderRadius: BorderRadius.circular(8.r),
+              ),
+              child: Text('Best',
+                  style: TextStyle(
+                      fontSize: 11.sp,
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold)),
+            ),
         ],
       ),
     );
   }
 
   void _showPaymentHistory() {
-    showDialog(
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Payment History'),
-        content: const Text('No payment history yet.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
+      backgroundColor: Colors.transparent,
+      builder: (_) => Container(
+        padding: EdgeInsets.all(24.w),
+        decoration: BoxDecoration(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          borderRadius:
+              BorderRadius.vertical(top: Radius.circular(24.r)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Payment History',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.bold)),
+            SizedBox(height: 40.h),
+            Icon(Icons.receipt_long_outlined,
+                size: 48.w, color: Colors.grey),
+            SizedBox(height: 12.h),
+            Text('No payments yet',
+                style: TextStyle(
+                    fontSize: 14.sp, color: Colors.grey)),
+            SizedBox(height: 40.h),
+          ],
+        ),
       ),
     );
   }
@@ -597,10 +1229,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _showExportDataDialog() {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Export Data'),
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16.r)),
+        title: const Text('Export My Data'),
         content: const Text(
-          'Your data export will be prepared and sent to your email address.',
+          'We will prepare a complete export of all your videos, settings, and account data and send it to your email address within 24 hours.',
         ),
         actions: [
           TextButton(
@@ -610,9 +1244,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Export request sent to your email!')),
-              );
+              _showToast('✅ Export request submitted! Check your email.');
             },
             child: const Text('Request Export'),
           ),
@@ -624,21 +1256,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _showAboutDialog() {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16.r)),
         title: const Text('chAs AI Creator'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.auto_awesome, size: 60.w, color: AppTheme.primaryColor),
+            Container(
+              width: 72.w,
+              height: 72.w,
+              decoration: BoxDecoration(
+                gradient: AppTheme.primaryGradient,
+                borderRadius: BorderRadius.circular(20.r),
+              ),
+              child: Icon(Icons.auto_fix_high_rounded,
+                  size: 36.w, color: Colors.white),
+            ),
             SizedBox(height: 16.h),
-            const Text('Version 1.0.0', textAlign: TextAlign.center),
+            Text('Version 1.0.0',
+                style: TextStyle(
+                    fontSize: 13.sp, color: Colors.grey)),
             SizedBox(height: 8.h),
-            const Text(
-              'AI-powered video content creation platform built for Nigerian creators.',
+            Text(
+              'AI-powered video content creation platform for global creators.',
               textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13.sp),
             ),
             SizedBox(height: 8.h),
-            const Text('Made with ❤️ by chAs Tech Group', textAlign: TextAlign.center),
+            Text('Made with ❤️ by chAs Tech Group',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 12.sp, color: Colors.grey)),
           ],
         ),
         actions: [
@@ -652,40 +1301,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showPrivacyPolicy() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Privacy Policy'),
-        content: const SingleChildScrollView(
-          child: Text(
-            'chAs AI Creator collects your email and usage data to provide the service. '
-            'We do not sell your personal data to third parties. '
-            'Your videos are stored securely on our servers. '
-            'You can request data deletion at any time by contacting support.',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
+    _showTextDialog(
+      'Privacy Policy',
+      'chAs AI Creator collects your email and usage data solely to provide the service. '
+      'We do not sell your personal data to third parties. '
+      'Your videos are stored securely and only accessible by you. '
+      'You may request complete data deletion at any time by contacting support. '
+      'We use industry-standard encryption to protect all your data.',
     );
   }
 
   void _showTermsOfService() {
+    _showTextDialog(
+      'Terms of Service',
+      'By using chAs AI Creator, you agree to use the app responsibly. '
+      'You must not use the app to generate harmful, illegal, misleading, or hateful content. '
+      'All generated content remains your intellectual property. '
+      'chAs Tech Group reserves the right to suspend accounts that violate these terms. '
+      'Free tier is limited to 2 videos per day. Abuse of the free tier may result in account suspension.',
+    );
+  }
+
+  void _showContactSupport() {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Terms of Service'),
-        content: const SingleChildScrollView(
-          child: Text(
-            'By using chAs AI Creator, you agree to use the app responsibly. '
-            'You must not use the app to generate harmful, illegal, or misleading content. '
-            'chAs Tech Group reserves the right to suspend accounts that violate these terms. '
-            'Free tier is limited to 2 videos per day.',
-          ),
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16.r)),
+        title: const Text('Contact Support'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.email_outlined),
+              title: const Text('Email Support'),
+              subtitle: const Text('support@chastech.ai'),
+              onTap: () {
+                Navigator.pop(context);
+                Clipboard.setData(
+                    const ClipboardData(text: 'support@chastech.ai'));
+                _showToast('✅ Email copied!');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.chat_outlined),
+              title: const Text('Live Chat'),
+              subtitle: const Text('Mon–Fri, 9am–6pm WAT'),
+              onTap: () => Navigator.pop(context),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -697,12 +1361,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _showLogoutConfirmation() {
+  void _showTextDialog(String title, String content) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Logout'),
-        content: const Text('Are you sure you want to logout?'),
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16.r)),
+        title: Text(title),
+        content: SingleChildScrollView(child: Text(content)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showLogoutDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16.r)),
+        title: const Text('Log Out'),
+        content: const Text('Are you sure you want to log out?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -713,21 +1397,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Navigator.pop(context);
               context.read<AuthBloc>().add(LoggedOut());
             },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Logout', style: TextStyle(color: Colors.white)),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red),
+            child: const Text('Log Out',
+                style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
     );
   }
 
-  void _showDeleteAccountConfirmation() {
+  void _showDeleteAccountDialog() {
+    final confirmCtrl = TextEditingController();
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16.r)),
         title: const Text('Delete Account'),
-        content: const Text(
-          'Are you sure you want to delete your account? This action cannot be undone.',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '⚠️ This will permanently delete all your videos, settings, and account data. This cannot be undone.',
+              style: TextStyle(fontSize: 13.sp),
+            ),
+            SizedBox(height: 16.h),
+            Text('Type DELETE to confirm:',
+                style: TextStyle(
+                    fontSize: 12.sp, fontWeight: FontWeight.w600)),
+            SizedBox(height: 8.h),
+            TextField(
+              controller: confirmCtrl,
+              decoration: InputDecoration(
+                hintText: 'DELETE',
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10.r)),
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -736,16 +1445,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           TextButton(
             onPressed: () {
+              if (confirmCtrl.text != 'DELETE') {
+                _showToast('❌ Please type DELETE to confirm',
+                    error: true);
+                return;
+              }
               Navigator.pop(context);
               context.read<AuthBloc>().add(LoggedOut());
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Account deletion requested.')),
-              );
+              _showToast('Account deletion requested.');
             },
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+            child: const Text('Delete',
+                style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
     );
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // HELPERS
+  // ─────────────────────────────────────────────────────────────────────────
+
+  String _capitalize(String s) =>
+      s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
 }
