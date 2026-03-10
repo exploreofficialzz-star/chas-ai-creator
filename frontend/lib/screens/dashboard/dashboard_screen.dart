@@ -1,6 +1,7 @@
 /*
  * chAs AI Creator - Dashboard Screen
  * Enhanced Global Professional Version
+ * FIX: Welcome card is now STATIC (pinned), only content below scrolls
  */
 
 import 'package:flutter/material.dart';
@@ -33,7 +34,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool _isLoading = true;
   bool _isRefreshing = false;
   int _credits = 0;
-  int _notificationCount = 2; // FIX 1 - demo badge, wire to real notif API later
+  int _notificationCount = 2;
 
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
@@ -59,23 +60,17 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Future<void> _loadData({bool silent = false}) async {
     if (!silent) setState(() => _isLoading = _recentVideos.isEmpty);
-
     try {
-      // FIX 2 - load in parallel instead of sequential
       final results = await Future.wait([
         _apiService.getUsageStats(),
         _apiService.getVideos(limit: 5),
       ]);
-
       final stats = results[0] as Map<String, dynamic>;
       final videosResponse = results[1] as Map<String, dynamic>;
-
-      // FIX 3 - handle multiple possible response keys
       final videos = (videosResponse['videos'] ??
               videosResponse['data'] ??
               videosResponse['items'] ??
               []) as List;
-
       if (mounted) {
         setState(() {
           _usageStats = stats;
@@ -125,6 +120,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   // ─────────────────────────────────────────────────────────────────────────
   // BUILD
+  // FIX — Column with static header + Expanded scrollable body
   // ─────────────────────────────────────────────────────────────────────────
 
   @override
@@ -135,77 +131,72 @@ class _DashboardScreenState extends State<DashboardScreen>
         if (state is Authenticated) user = state.user;
 
         return Scaffold(
-          body: RefreshIndicator(
-            onRefresh: _refresh,
-            color: AppTheme.primaryColor,
-            child: CustomScrollView(
-              slivers: [
-                // ── App bar ─────────────────────────────────────────
-                _buildSliverAppBar(user),
+          // ── Static AppBar ─────────────────────────────────────────
+          appBar: _buildAppBar(user),
 
-                // ── Body ────────────────────────────────────────────
-                if (_isLoading)
-                  const SliverFillRemaining(
-                    child: Center(child: CircularProgressIndicator()),
-                  )
-                else
-                  SliverToBoxAdapter(
-                    child: FadeTransition(
-                      opacity: _fadeAnim,
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 16.w),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            SizedBox(height: 16.h),
+          body: Column(
+            children: [
+              // ── STATIC — welcome card never scrolls ───────────────
+              Container(
+                color: Theme.of(context).scaffoldBackgroundColor,
+                padding: EdgeInsets.fromLTRB(16.w, 12.h, 16.w, 12.h),
+                child: _buildWelcomeCard(user),
+              ),
 
-                            // Welcome card
-                            _buildWelcomeCard(user),
-                            SizedBox(height: 20.h),
-
-                            // Daily usage bar
-                            _buildDailyUsageBar(),
-                            SizedBox(height: 20.h),
-
-                            // Stats grid
-                            _buildSectionTitle('📊 Your Stats'),
-                            SizedBox(height: 12.h),
-                            _buildStatsGrid(),
-                            SizedBox(height: 20.h),
-
-                            // Upgrade banner (free users only)
-                            if ((user?.subscriptionTier ?? 'free')
-                                    .toLowerCase() ==
-                                'free') ...[
-                              _buildUpgradeBanner(),
+              // ── SCROLLABLE — everything below ─────────────────────
+              Expanded(
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : RefreshIndicator(
+                        onRefresh: _refresh,
+                        color: AppTheme.primaryColor,
+                        child: FadeTransition(
+                          opacity: _fadeAnim,
+                          child: ListView(
+                            padding: EdgeInsets.fromLTRB(
+                                16.w, 4.h, 16.w, 100.h),
+                            children: [
+                              // Daily usage bar
+                              _buildDailyUsageBar(),
                               SizedBox(height: 20.h),
+
+                              // Stats grid
+                              _buildSectionTitle('📊 Your Stats'),
+                              SizedBox(height: 12.h),
+                              _buildStatsGrid(),
+                              SizedBox(height: 20.h),
+
+                              // Upgrade banner (free only)
+                              if ((user?.subscriptionTier ?? 'free')
+                                      .toLowerCase() ==
+                                  'free') ...[
+                                _buildUpgradeBanner(),
+                                SizedBox(height: 20.h),
+                              ],
+
+                              // Watch ad reward
+                              RewardAdButton(
+                                  onRewardEarned: _onCreditsEarned),
+                              SizedBox(height: 20.h),
+
+                              // Quick actions
+                              _buildSectionTitle('⚡ Quick Actions'),
+                              SizedBox(height: 12.h),
+                              _buildQuickActions(),
+                              SizedBox(height: 20.h),
+
+                              // Banner ad
+                              const BannerAdContainer(),
+                              SizedBox(height: 20.h),
+
+                              // Recent videos
+                              _buildRecentVideos(),
                             ],
-
-                            // Watch ad reward
-                            RewardAdButton(
-                                onRewardEarned: _onCreditsEarned),
-                            SizedBox(height: 20.h),
-
-                            // Quick actions
-                            _buildSectionTitle('⚡ Quick Actions'),
-                            SizedBox(height: 12.h),
-                            _buildQuickActions(),
-                            SizedBox(height: 20.h),
-
-                            // Banner ad
-                            const BannerAdContainer(),
-                            SizedBox(height: 20.h),
-
-                            // Recent videos
-                            _buildRecentVideos(),
-                            SizedBox(height: 100.h),
-                          ],
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-              ],
-            ),
+              ),
+            ],
           ),
         );
       },
@@ -213,13 +204,11 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // SLIVER APP BAR
+  // APP BAR — plain AppBar (no longer a SliverAppBar)
   // ─────────────────────────────────────────────────────────────────────────
 
-  Widget _buildSliverAppBar(User? user) {
-    return SliverAppBar(
-      floating: true,
-      snap: true,
+  PreferredSizeWidget _buildAppBar(User? user) {
+    return AppBar(
       title: Row(
         children: [
           Icon(Icons.auto_awesome,
@@ -237,11 +226,11 @@ class _DashboardScreenState extends State<DashboardScreen>
       actions: [
         // Credits chip
         GestureDetector(
-          onTap: () => _showCreditsSheet(),
+          onTap: _showCreditsSheet,
           child: Container(
             margin: EdgeInsets.only(right: 6.w),
-            padding:
-                EdgeInsets.symmetric(horizontal: 12.w, vertical: 6.h),
+            padding: EdgeInsets.symmetric(
+                horizontal: 12.w, vertical: 6.h),
             decoration: BoxDecoration(
               color: AppTheme.warningColor.withOpacity(0.12),
               borderRadius: BorderRadius.circular(20.r),
@@ -268,6 +257,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
         // Notification bell with badge
         Stack(
+          clipBehavior: Clip.none,
           children: [
             IconButton(
               icon: const Icon(Icons.notifications_outlined),
@@ -275,8 +265,8 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
             if (_notificationCount > 0)
               Positioned(
-                top: 8,
-                right: 8,
+                top: 6,
+                right: 6,
                 child: Container(
                   width: 16.w,
                   height: 16.w,
@@ -288,9 +278,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                     child: Text(
                       '$_notificationCount',
                       style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 9.sp,
-                          fontWeight: FontWeight.bold),
+                        color: Colors.white,
+                        fontSize: 9.sp,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
@@ -304,15 +295,16 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // WELCOME CARD
+  // WELCOME CARD — static, never scrolls
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildWelcomeCard(User? user) {
     final tier = (user?.subscriptionTier ?? 'free').toLowerCase();
     final tierEmoji =
         tier == 'pro' ? '⭐' : tier == 'basic' ? '🔵' : '🆓';
-    final name =
-        user?.displayName ?? user?.email?.split('@').first ?? 'Creator';
+    final name = user?.displayName ??
+        user?.email?.split('@').first ??
+        'Creator';
     final initial = name[0].toUpperCase();
 
     return Container(
@@ -337,15 +329,16 @@ class _DashboardScreenState extends State<DashboardScreen>
             decoration: BoxDecoration(
               color: Colors.white24,
               shape: BoxShape.circle,
-              border:
-                  Border.all(color: Colors.white38, width: 2),
+              border: Border.all(color: Colors.white38, width: 2),
             ),
             child: user?.avatarUrl != null
                 ? ClipOval(
-                    child: Image.network(user!.avatarUrl!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) =>
-                            _avatarText(initial)),
+                    child: Image.network(
+                      user!.avatarUrl!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) =>
+                          _avatarText(initial),
+                    ),
                   )
                 : _avatarText(initial),
           ),
@@ -376,8 +369,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 SizedBox(height: 10.h),
                 Row(
                   children: [
-                    _welchipBadge(
-                        '$tierEmoji ${tier.toUpperCase()}'),
+                    _welchipBadge('$tierEmoji ${tier.toUpperCase()}'),
                     SizedBox(width: 8.w),
                     _welchipBadge(
                       '🎬 ${_usageStats?['remaining_daily_videos'] ?? 0} left today',
@@ -393,25 +385,31 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Widget _avatarText(String initial) => Center(
-        child: Text(initial,
-            style: TextStyle(
-                fontSize: 24.sp,
-                fontWeight: FontWeight.bold,
-                color: Colors.white)),
+        child: Text(
+          initial,
+          style: TextStyle(
+            fontSize: 24.sp,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
       );
 
   Widget _welchipBadge(String label) => Container(
-        padding:
-            EdgeInsets.symmetric(horizontal: 10.w, vertical: 5.h),
+        padding: EdgeInsets.symmetric(
+            horizontal: 10.w, vertical: 5.h),
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.2),
           borderRadius: BorderRadius.circular(20.r),
         ),
-        child: Text(label,
-            style: TextStyle(
-                fontSize: 11.sp,
-                color: Colors.white,
-                fontWeight: FontWeight.w600)),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11.sp,
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       );
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -419,8 +417,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildDailyUsageBar() {
-    final used =
-        (_usageStats?['videos_today'] ?? 0) as int;
+    final used = (_usageStats?['videos_today'] ?? 0) as int;
     final remaining =
         (_usageStats?['remaining_daily_videos'] ?? 0) as int;
     final total = used + remaining;
@@ -443,13 +440,12 @@ class _DashboardScreenState extends State<DashboardScreen>
               Text(
                 '📅 Daily Usage',
                 style: TextStyle(
-                    fontSize: 13.sp,
-                    fontWeight: FontWeight.w600),
+                    fontSize: 13.sp, fontWeight: FontWeight.w600),
               ),
               Text(
                 '$used / $total videos',
-                style: TextStyle(
-                    fontSize: 12.sp, color: Colors.grey),
+                style:
+                    TextStyle(fontSize: 12.sp, color: Colors.grey),
               ),
             ],
           ),
@@ -475,9 +471,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 : '⚠️ Daily limit reached — upgrade for more!',
             style: TextStyle(
               fontSize: 11.sp,
-              color: remaining > 0
-                  ? Colors.grey
-                  : Colors.orange,
+              color: remaining > 0 ? Colors.grey : Colors.orange,
             ),
           ),
         ],
@@ -494,22 +488,19 @@ class _DashboardScreenState extends State<DashboardScreen>
       _StatItem(
         emoji: '📹',
         label: 'Total Videos',
-        value:
-            '${_usageStats?['total_videos_generated'] ?? 0}',
+        value: '${_usageStats?['total_videos_generated'] ?? 0}',
         color: AppTheme.primaryColor,
       ),
       _StatItem(
         emoji: '⏰',
         label: 'Remaining',
-        value:
-            '${_usageStats?['remaining_daily_videos'] ?? 0}',
+        value: '${_usageStats?['remaining_daily_videos'] ?? 0}',
         color: Colors.orange,
       ),
       _StatItem(
         emoji: '📆',
         label: 'This Month',
-        value:
-            '${_usageStats?['videos_this_month'] ?? 0}',
+        value: '${_usageStats?['videos_this_month'] ?? 0}',
         color: Colors.green,
       ),
       _StatItem(
@@ -537,25 +528,20 @@ class _DashboardScreenState extends State<DashboardScreen>
       decoration: BoxDecoration(
         color: item.color.withOpacity(0.08),
         borderRadius: BorderRadius.circular(16.r),
-        border: Border.all(
-            color: item.color.withOpacity(0.15)),
+        border: Border.all(color: item.color.withOpacity(0.15)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Row(
-            children: [
-              Container(
-                padding: EdgeInsets.all(8.w),
-                decoration: BoxDecoration(
-                  color: item.color.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(10.r),
-                ),
-                child: Text(item.emoji,
-                    style: TextStyle(fontSize: 16.sp)),
-              ),
-            ],
+          Container(
+            padding: EdgeInsets.all(8.w),
+            decoration: BoxDecoration(
+              color: item.color.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10.r),
+            ),
+            child:
+                Text(item.emoji, style: TextStyle(fontSize: 16.sp)),
           ),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -571,9 +557,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               Text(
                 item.label,
                 style: TextStyle(
-                  fontSize: 11.sp,
-                  color: Colors.grey,
-                ),
+                    fontSize: 11.sp, color: Colors.grey),
               ),
             ],
           ),
@@ -619,7 +603,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                   Text(
                     '50 videos/day · 5 min max · 4K quality',
                     style: TextStyle(
-                        fontSize: 11.sp, color: Colors.white.withOpacity(0.8)),
+                      fontSize: 11.sp,
+                      color: Colors.white.withOpacity(0.8),
+                    ),
                   ),
                 ],
               ),
@@ -653,72 +639,66 @@ class _DashboardScreenState extends State<DashboardScreen>
   Widget _buildQuickActions() {
     final actions = [
       _QuickAction(
-        emoji: '✨',
-        label: 'Create\nVideo',
-        color: AppTheme.primaryColor,
-        onTap: () => _navigateTo(2),
-      ),
+          emoji: '✨',
+          label: 'Create\nVideo',
+          color: AppTheme.primaryColor,
+          onTap: () => _navigateTo(2)),
       _QuickAction(
-        emoji: '🎬',
-        label: 'My\nVideos',
-        color: Colors.green,
-        onTap: () => _navigateTo(1),
-      ),
+          emoji: '🎬',
+          label: 'My\nVideos',
+          color: Colors.green,
+          onTap: () => _navigateTo(1)),
       _QuickAction(
-        emoji: '⚙️',
-        label: 'Settings',
-        color: Colors.blueGrey,
-        onTap: () => _navigateTo(3),
-      ),
+          emoji: '⚙️',
+          label: 'Settings',
+          color: Colors.blueGrey,
+          onTap: () => _navigateTo(3)),
       _QuickAction(
-        emoji: '⭐',
-        label: 'Upgrade',
-        color: Colors.amber.shade700,
-        onTap: () => _showUpgradeSheet(),
-      ),
+          emoji: '⭐',
+          label: 'Upgrade',
+          color: Colors.amber.shade700,
+          onTap: _showUpgradeSheet),
     ];
 
     return Row(
-      children: actions
-          .map((a) => Expanded(
-                child: Padding(
-                  padding: EdgeInsets.only(
-                    right: a != actions.last ? 10.w : 0,
-                  ),
-                  child: GestureDetector(
-                    onTap: a.onTap,
-                    child: Container(
-                      padding: EdgeInsets.symmetric(
-                          vertical: 16.h),
-                      decoration: BoxDecoration(
-                        color: a.color.withOpacity(0.1),
-                        borderRadius:
-                            BorderRadius.circular(16.r),
-                        border: Border.all(
-                            color: a.color.withOpacity(0.2)),
-                      ),
-                      child: Column(
-                        children: [
-                          Text(a.emoji,
-                              style:
-                                  TextStyle(fontSize: 22.sp)),
-                          SizedBox(height: 6.h),
-                          Text(
-                            a.label,
-                            style: TextStyle(
-                              fontSize: 10.sp,
-                              fontWeight: FontWeight.w600,
-                              color: a.color,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+      children: actions.asMap().entries.map((entry) {
+        final i = entry.key;
+        final a = entry.value;
+        return Expanded(
+          child: Padding(
+            padding: EdgeInsets.only(
+                right: i < actions.length - 1 ? 10.w : 0),
+            child: GestureDetector(
+              onTap: a.onTap,
+              child: Container(
+                padding: EdgeInsets.symmetric(vertical: 16.h),
+                decoration: BoxDecoration(
+                  color: a.color.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(16.r),
+                  border:
+                      Border.all(color: a.color.withOpacity(0.2)),
                 ),
-              ))
-          .toList(),
+                child: Column(
+                  children: [
+                    Text(a.emoji,
+                        style: TextStyle(fontSize: 22.sp)),
+                    SizedBox(height: 6.h),
+                    Text(
+                      a.label,
+                      style: TextStyle(
+                        fontSize: 10.sp,
+                        fontWeight: FontWeight.w600,
+                        color: a.color,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 
@@ -776,8 +756,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           color: Theme.of(context).cardColor,
           borderRadius: BorderRadius.circular(16.r),
           border: Border.all(
-            color: _statusColor(status).withOpacity(0.15),
-          ),
+              color: _statusColor(status).withOpacity(0.15)),
         ),
         child: Row(
           children: [
@@ -801,13 +780,12 @@ class _DashboardScreenState extends State<DashboardScreen>
                         child: Container(
                           width: 28.w,
                           height: 28.w,
-                          decoration: BoxDecoration(
+                          decoration: const BoxDecoration(
                             color: Colors.black45,
                             shape: BoxShape.circle,
                           ),
                           child: Icon(Icons.play_arrow,
-                              color: Colors.white,
-                              size: 16.w),
+                              color: Colors.white, size: 16.w),
                         ),
                       ),
                     if (status == 'processing' ||
@@ -864,8 +842,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                     Text(
                       _formatDate(createdAt),
                       style: TextStyle(
-                          fontSize: 10.sp,
-                          color: Colors.grey),
+                          fontSize: 10.sp, color: Colors.grey),
                     ),
                   ],
                 ],
@@ -931,9 +908,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           Text(
             'No videos yet',
             style: TextStyle(
-              fontSize: 16.sp,
-              fontWeight: FontWeight.bold,
-            ),
+                fontSize: 16.sp, fontWeight: FontWeight.bold),
           ),
           SizedBox(height: 6.h),
           Text(
@@ -992,8 +967,8 @@ class _DashboardScreenState extends State<DashboardScreen>
               ),
             ),
             Text('credits available',
-                style:
-                    TextStyle(fontSize: 13.sp, color: Colors.grey)),
+                style: TextStyle(
+                    fontSize: 13.sp, color: Colors.grey)),
             SizedBox(height: 20.h),
             Container(
               padding: EdgeInsets.all(14.w),
@@ -1004,8 +979,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               child: Column(
                 children: [
                   _creditRow('🎬 Generate 1 video', '1 credit'),
-                  _creditRow(
-                      '📺 Watch ad', '+5 credits'),
+                  _creditRow('📺 Watch ad', '+5 credits'),
                   _creditRow('💎 Buy credits', 'From settings'),
                 ],
               ),
@@ -1027,8 +1001,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(label,
-                style: TextStyle(fontSize: 13.sp)),
+            Text(label, style: TextStyle(fontSize: 13.sp)),
             Text(value,
                 style: TextStyle(
                     fontSize: 13.sp,
@@ -1071,8 +1044,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  Widget _notifTile(String emoji, String title, String body,
-      String time) {
+  Widget _notifTile(
+      String emoji, String title, String body, String time) {
     return Container(
       margin: EdgeInsets.only(bottom: 10.h),
       padding: EdgeInsets.all(14.w),
@@ -1111,6 +1084,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (_) => Container(
         padding: EdgeInsets.all(24.w),
         decoration: BoxDecoration(
@@ -1128,61 +1102,81 @@ class _DashboardScreenState extends State<DashboardScreen>
                     ?.copyWith(fontWeight: FontWeight.bold)),
             SizedBox(height: 16.h),
             ...[
-              ('🆓 Free', ['2 videos/day', '30s max', 'Watermark'], false),
-              ('🔵 Basic', ['10 videos/day', '60s max', 'HD', 'No watermark'], false),
-              ('⭐ Pro', ['50 videos/day', '5 min max', '4K', 'Priority', 'All AI features'], true),
-            ].map((plan) => Container(
-                  margin: EdgeInsets.only(bottom: 10.h),
-                  padding: EdgeInsets.all(14.w),
-                  decoration: BoxDecoration(
+              (
+                '🆓 Free',
+                ['2 videos/day', '30s max', 'Watermark'],
+                false
+              ),
+              (
+                '🔵 Basic',
+                ['10 videos/day', '60s max', 'HD', 'No watermark'],
+                false
+              ),
+              (
+                '⭐ Pro',
+                [
+                  '50 videos/day',
+                  '5 min max',
+                  '4K',
+                  'Priority',
+                  'All AI features'
+                ],
+                true
+              ),
+            ].map(
+              (plan) => Container(
+                margin: EdgeInsets.only(bottom: 10.h),
+                padding: EdgeInsets.all(14.w),
+                decoration: BoxDecoration(
+                  color: plan.$3
+                      ? AppTheme.primaryColor.withOpacity(0.1)
+                      : Theme.of(context).cardColor,
+                  borderRadius: BorderRadius.circular(14.r),
+                  border: Border.all(
                     color: plan.$3
-                        ? AppTheme.primaryColor.withOpacity(0.1)
-                        : Theme.of(context).cardColor,
-                    borderRadius: BorderRadius.circular(14.r),
-                    border: Border.all(
-                      color: plan.$3
-                          ? AppTheme.primaryColor
-                          : Colors.grey.withOpacity(0.2),
-                      width: plan.$3 ? 1.5 : 1,
-                    ),
+                        ? AppTheme.primaryColor
+                        : Colors.grey.withOpacity(0.2),
+                    width: plan.$3 ? 1.5 : 1,
                   ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment:
-                              CrossAxisAlignment.start,
-                          children: [
-                            Text(plan.$1,
-                                style: TextStyle(
-                                    fontSize: 14.sp,
-                                    fontWeight: FontWeight.bold)),
-                            SizedBox(height: 4.h),
-                            ...plan.$2.map((f) => Text('✓ $f',
-                                style: TextStyle(
-                                    fontSize: 11.sp,
-                                    color: Colors.grey))),
-                          ],
-                        ),
-                      ),
-                      if (plan.$3)
-                        Container(
-                          padding: EdgeInsets.symmetric(
-                              horizontal: 10.w, vertical: 6.h),
-                          decoration: BoxDecoration(
-                            color: AppTheme.primaryColor,
-                            borderRadius:
-                                BorderRadius.circular(10.r),
-                          ),
-                          child: Text('Best',
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                        children: [
+                          Text(plan.$1,
+                              style: TextStyle(
+                                  fontSize: 14.sp,
+                                  fontWeight: FontWeight.bold)),
+                          SizedBox(height: 4.h),
+                          ...plan.$2.map((f) => Text('✓ $f',
                               style: TextStyle(
                                   fontSize: 11.sp,
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold)),
+                                  color: Colors.grey))),
+                        ],
+                      ),
+                    ),
+                    if (plan.$3)
+                      Container(
+                        padding: EdgeInsets.symmetric(
+                            horizontal: 10.w, vertical: 6.h),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryColor,
+                          borderRadius:
+                              BorderRadius.circular(10.r),
                         ),
-                    ],
-                  ),
-                )),
+                        child: Text('Best',
+                            style: TextStyle(
+                                fontSize: 11.sp,
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                  ],
+                ),
+              ),
+            ),
             SizedBox(height: 8.h),
             SizedBox(
               width: double.infinity,
@@ -1213,9 +1207,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   Widget _buildSectionTitle(String title) => Text(
         title,
         style: TextStyle(
-          fontSize: 17.sp,
-          fontWeight: FontWeight.bold,
-        ),
+            fontSize: 17.sp, fontWeight: FontWeight.bold),
       );
 
   Color _statusColor(String status) => switch (status) {
