@@ -1,7 +1,7 @@
 /*
  * chAs AI Creator - API Service
  * Created by: chAs
- * Nigeria Friendly Version - Uses Custom JWT Auth
+ * Global Version - Uses Custom JWT Auth
  */
 
 import 'dart:io';
@@ -19,11 +19,16 @@ class ApiService {
   static const String baseUrl =
       'https://chas-ai-creator-2.onrender.com/api/v1';
 
-  ApiService() {
+  // Singleton so interceptors are never duplicated
+  static final ApiService _instance = ApiService._internal();
+  factory ApiService() => _instance;
+
+  ApiService._internal() {
     _dio = Dio(BaseOptions(
       baseUrl: baseUrl,
       connectTimeout: const Duration(seconds: 30),
-      receiveTimeout: const Duration(seconds: 120), // FIX 1 - AI calls need longer timeout
+      receiveTimeout: const Duration(seconds: 180),
+      sendTimeout: const Duration(seconds: 60),
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
@@ -39,7 +44,6 @@ class ApiService {
         return handler.next(options);
       },
       onError: (error, handler) async {
-        // FIX 2 - only attempt refresh on 401, not on all errors
         if (error.response?.statusCode == 401) {
           try {
             final newToken = await _authService.refreshAccessToken();
@@ -81,7 +85,6 @@ class ApiService {
   }
 
   Future<UserSettings?> getUserSettings() async {
-    // FIX 3 - return null instead of crashing when settings not found
     try {
       final response = await _dio.get('/users/settings');
       final data = response.data;
@@ -101,7 +104,6 @@ class ApiService {
 
   Future<Map<String, dynamic>> getUsageStats() async {
     final response = await _dio.get('/users/usage');
-    // FIX 4 - safe defaults so dashboard never crashes on missing fields
     final data = response.data as Map<String, dynamic>? ?? {};
     return {
       'total_videos_generated': 0,
@@ -133,6 +135,10 @@ class ApiService {
     String backgroundMusicStyle = 'upbeat',
     String? userInstructions,
     String? scenePriorityNotes,
+    // NEW — audio & platform fields from SmartCreateScreen
+    String audioMode = 'silent',
+    String voiceStyle = 'professional',
+    List<String> targetPlatforms = const ['tiktok'],
   }) async {
     final response = await _dio.post('/videos/generate', data: {
       'niche': niche,
@@ -152,7 +158,11 @@ class ApiService {
       'background_music_enabled': backgroundMusicEnabled,
       'background_music_style': backgroundMusicStyle,
       if (userInstructions != null) 'user_instructions': userInstructions,
-      if (scenePriorityNotes != null) 'scene_priority_notes': scenePriorityNotes,
+      if (scenePriorityNotes != null)
+        'scene_priority_notes': scenePriorityNotes,
+      'audio_mode': audioMode,
+      'voice_style': voiceStyle,
+      'target_platforms': targetPlatforms,
     });
     return response.data;
   }
@@ -167,7 +177,6 @@ class ApiService {
       'page': page,
       'limit': limit,
     });
-    // FIX 5 - safe defaults so videos screen never crashes
     final data = response.data as Map<String, dynamic>? ?? {};
     return {
       'videos': [],
@@ -296,7 +305,8 @@ class ApiService {
     return response.data;
   }
 
-  // FIX 6 - added missing smartGeneratePlan used by SmartCreateScreen
+  /// Full smart plan — used by SmartCreateScreen.
+  /// Sends all fields including audio mode, platforms, character consistency.
   Future<Map<String, dynamic>> smartGeneratePlan({
     required String idea,
     String aspectRatio = '9:16',
@@ -304,16 +314,46 @@ class ApiService {
     String style = 'cinematic',
     bool captionsEnabled = true,
     bool backgroundMusicEnabled = true,
+    String audioMode = 'narration',
+    String voiceStyle = 'professional',
+    List<String> targetPlatforms = const ['tiktok'],
+    bool characterConsistency = false,
+    int uploadedImageCount = 0,
   }) async {
-    final response = await _dio.post('/ai/smart-plan', data: {
-      'idea': idea,
-      'aspect_ratio': aspectRatio,
-      'duration': duration,
-      'style': style,
-      'captions_enabled': captionsEnabled,
-      'background_music_enabled': backgroundMusicEnabled,
-    });
+    final response = await _dio.post(
+      '/ai/smart-plan',
+      data: {
+        'idea': idea,
+        'aspect_ratio': aspectRatio,
+        'duration': duration,
+        'style': style,
+        'captions_enabled': captionsEnabled,
+        'background_music_enabled': backgroundMusicEnabled,
+        'audio_mode': audioMode,
+        'voice_style': voiceStyle,
+        'target_platforms': targetPlatforms,
+        'character_consistency': characterConsistency,
+        'uploaded_image_count': uploadedImageCount,
+      },
+      // Smart plan needs extra time — HuggingFace can be slow
+      options: Options(receiveTimeout: const Duration(seconds: 240)),
+    );
     return response.data;
+  }
+
+  /// Upload reference images for character consistency.
+  /// Returns list of uploaded URLs.
+  Future<List<String>> uploadReferenceImages(List<File> images) async {
+    final urls = <String>[];
+    for (final image in images) {
+      try {
+        final url = await uploadFile(image, 'references');
+        urls.add(url);
+      } catch (e) {
+        // skip failed images, don't block the whole plan
+      }
+    }
+    return urls;
   }
 
   Future<Map<String, dynamic>> getNiches() async {
@@ -334,6 +374,18 @@ class ApiService {
   Future<Map<String, dynamic>> getMusicStyles() async {
     final response = await _dio.get('/ai/music-styles');
     return response.data;
+  }
+
+  Future<Map<String, dynamic>> checkAiHealth() async {
+    try {
+      final response = await _dio.get(
+        '/ai/health',
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+      return response.data;
+    } catch (_) {
+      return {'status': 'unavailable'};
+    }
   }
 
   // ─── PAYMENTS ──────────────────────────────────────────────────────────────
@@ -395,13 +447,13 @@ class ApiService {
 
   Future<String> uploadFile(File file, String path) async {
     final fileName = file.path.split('/').last;
-
-    // FIX 7 - detect correct content type from extension
     final ext = fileName.split('.').last.toLowerCase();
     final contentType = switch (ext) {
       'png'  => MediaType('image', 'png'),
       'gif'  => MediaType('image', 'gif'),
       'webp' => MediaType('image', 'webp'),
+      'mp4'  => MediaType('video', 'mp4'),
+      'mov'  => MediaType('video', 'quicktime'),
       _      => MediaType('image', 'jpeg'),
     };
 
@@ -417,7 +469,6 @@ class ApiService {
       '/upload/$path',
       data: formData,
       options: Options(
-        // FIX 8 - longer timeout for file uploads on slow Nigerian networks
         receiveTimeout: const Duration(seconds: 180),
         sendTimeout: const Duration(seconds: 180),
       ),
@@ -427,39 +478,38 @@ class ApiService {
 
   // ─── ERROR HANDLING ────────────────────────────────────────────────────────
 
-  // FIX 9 - extract clean user-friendly error messages from backend responses
   String handleError(dynamic error) {
     if (error is DioException) {
-      // No internet
-      if (error.type == DioExceptionType.connectionTimeout ||
-          error.type == DioExceptionType.receiveTimeout ||
-          error.type == DioExceptionType.sendTimeout) {
-        return '⏱️ Connection timed out. Please check your internet and try again.';
-      }
-      if (error.type == DioExceptionType.connectionError) {
-        return '📡 No internet connection. Please check your network.';
+      switch (error.type) {
+        case DioExceptionType.connectionTimeout:
+        case DioExceptionType.sendTimeout:
+        case DioExceptionType.receiveTimeout:
+          return '⏱️ Connection timed out. Please check your internet.';
+        case DioExceptionType.connectionError:
+          return '📡 No internet connection. Please check your network.';
+        default:
+          break;
       }
 
       final response = error.response;
       if (response != null) {
         final data = response.data;
-
-        // Backend sends structured error with 'detail' or 'error' field
         if (data is Map) {
-          final msg = data['detail'] ?? data['error'] ?? data['message'];
+          final msg =
+              data['detail'] ?? data['error'] ?? data['message'];
           if (msg != null && msg.toString().isNotEmpty) {
             return msg.toString();
           }
         }
-
-        // HTTP status fallbacks
         return switch (response.statusCode) {
           400 => '❌ Invalid request. Please check your inputs.',
           401 => '🔒 Session expired. Please log in again.',
           403 => '🚫 You don\'t have permission to do this.',
           404 => '🔍 Not found. It may have been deleted.',
+          422 => '❌ Invalid data sent. Please try again.',
           429 => '⏳ Too many requests. Please wait a moment.',
-          500 => '🔧 Server error. Please try again shortly.',
+          500 => '🔧 Server error. Our team has been notified.',
+          502 => '🔧 Server is starting up. Please try again in 30s.',
           503 => '🔧 Service temporarily unavailable. Try again soon.',
           _   => '❌ Something went wrong (${response.statusCode}).',
         };
@@ -468,6 +518,26 @@ class ApiService {
       return '📡 Network error. Please check your connection.';
     }
 
-    return '❌ Unexpected error: ${error.toString()}';
+    return '❌ Unexpected error. Please try again.';
+  }
+
+  /// Returns true if the error is a network/timeout issue
+  bool isNetworkError(dynamic error) {
+    if (error is DioException) {
+      return error.type == DioExceptionType.connectionError ||
+          error.type == DioExceptionType.connectionTimeout ||
+          error.type == DioExceptionType.receiveTimeout ||
+          error.type == DioExceptionType.sendTimeout;
+    }
+    return false;
+  }
+
+  /// Returns true if the error is auth-related
+  bool isAuthError(dynamic error) {
+    if (error is DioException) {
+      return error.response?.statusCode == 401 ||
+          error.response?.statusCode == 403;
+    }
+    return false;
   }
 }
