@@ -15,6 +15,8 @@ class _VideosScreenState extends State<VideosScreen> {
   final ApiService _apiService = ApiService();
   List<dynamic> _videos = [];
   bool _isLoading = true;
+  // FIX 1 - added _isLoadingMore to prevent multiple simultaneous loads
+  bool _isLoadingMore = false;
   int _page = 1;
   bool _hasMore = true;
   String? _selectedStatus;
@@ -31,6 +33,7 @@ class _VideosScreenState extends State<VideosScreen> {
         _page = 1;
         _videos = [];
         _hasMore = true;
+        _isLoading = true;
       });
     }
 
@@ -41,13 +44,21 @@ class _VideosScreenState extends State<VideosScreen> {
         limit: 20,
       );
 
+      // FIX 2 - null safety on response['videos']
+      final newVideos = response['videos'] ?? [];
+      final total = response['total'] ?? 0;
+
       setState(() {
-        _videos.addAll(response['videos']);
-        _hasMore = _videos.length < response['total'];
+        _videos.addAll(newVideos);
+        _hasMore = _videos.length < total;
         _isLoading = false;
+        _isLoadingMore = false;
       });
     } catch (e) {
-      setState(() => _isLoading = false);
+      setState(() {
+        _isLoading = false;
+        _isLoadingMore = false;
+      });
     }
   }
 
@@ -56,8 +67,12 @@ class _VideosScreenState extends State<VideosScreen> {
   }
 
   void _loadMore() {
-    if (_hasMore && !_isLoading) {
-      setState(() => _page++);
+    // FIX 3 - check _isLoadingMore to prevent multiple simultaneous calls
+    if (_hasMore && !_isLoading && !_isLoadingMore) {
+      setState(() {
+        _page++;
+        _isLoadingMore = true;
+      });
       _loadVideos();
     }
   }
