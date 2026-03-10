@@ -23,10 +23,9 @@ class _VideosScreenState extends State<VideosScreen>
   bool _isRefreshing = false;
   int _page = 1;
   bool _hasMore = true;
-  String? _selectedStatus; // null = All
-  String _sortBy = 'newest'; // newest | oldest | longest
+  String? _selectedStatus;
+  String _sortBy = 'newest';
 
-  // Stats
   int _totalVideos = 0;
   int _completedCount = 0;
   int _processingCount = 0;
@@ -34,19 +33,21 @@ class _VideosScreenState extends State<VideosScreen>
   late TabController _tabController;
 
   final List<_StatusTab> _tabs = const [
-    _StatusTab(null,        '⭐ All'),
-    _StatusTab('processing','⏳ Processing'),
-    _StatusTab('completed', '✅ Done'),
-    _StatusTab('failed',    '❌ Failed'),
+    _StatusTab(null,         '⭐ All'),
+    _StatusTab('processing', '⏳ Processing'),
+    _StatusTab('completed',  '✅ Done'),
+    _StatusTab('failed',     '❌ Failed'),
   ];
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: _tabs.length, vsync: this);
+    _tabController =
+        TabController(length: _tabs.length, vsync: this);
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging) {
-        setState(() => _selectedStatus = _tabs[_tabController.index].status);
+        setState(
+            () => _selectedStatus = _tabs[_tabController.index].status);
         _loadVideos(refresh: true);
       }
     });
@@ -85,12 +86,12 @@ class _VideosScreenState extends State<VideosScreen>
         limit: 20,
       );
 
-      // FIX 1 - handle both 'videos' and 'data' response keys
       final newVideos = (response['videos'] ??
               response['data'] ??
               response['items'] ??
               []) as List;
-      final total = (response['total'] ?? response['count'] ?? 0) as int;
+      final total =
+          (response['total'] ?? response['count'] ?? 0) as int;
 
       if (mounted) {
         setState(() {
@@ -104,13 +105,15 @@ class _VideosScreenState extends State<VideosScreen>
           _isLoading = false;
           _isLoadingMore = false;
           _isRefreshing = false;
-
-          // Compute stat counts from loaded videos
-          _completedCount =
-              _videos.where((v) => v['status'] == 'completed').length;
+          _completedCount = _videos
+              .where((v) => v['status'] == 'completed')
+              .length;
           _processingCount = _videos
               .where((v) =>
-                  v['status'] == 'processing' || v['status'] == 'pending')
+                  v['status'] == 'processing' ||
+                  v['status'] == 'pending' ||
+                  (v['status'] as String? ?? '')
+                      .contains('generating'))
               .length;
         });
       }
@@ -165,100 +168,126 @@ class _VideosScreenState extends State<VideosScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: NestedScrollView(
-        controller: _scrollController,
-        headerSliverBuilder: (context, innerBoxIsScrolled) => [
-          // ── Sliver app bar ───────────────────────────────────────────
-          SliverAppBar(
-            expandedHeight: 160.h,
-            floating: true,
-            pinned: true,
-            snap: false,
-            title: const Text('My Videos'),
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.sort),
-                tooltip: 'Sort',
-                onPressed: _showSortSheet,
-              ),
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                onPressed: _isRefreshing ? null : _refresh,
-              ),
-            ],
-            flexibleSpace: FlexibleSpaceBar(
-              background: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      AppTheme.primaryColor.withOpacity(0.15),
-                      Colors.transparent,
-                    ],
-                  ),
-                ),
-                child: SafeArea(
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(
-                        16.w, 56.h, 16.w, 0),
-                    child: _buildStatsRow(),
-                  ),
-                ),
-              ),
-            ),
-            bottom: PreferredSize(
-              preferredSize: Size.fromHeight(44.h),
-              child: _buildTabBar(),
-            ),
-          ),
+
+      // FIX 1 — plain AppBar + separate tab bar underneath the stats
+      // Removed NestedScrollView + SliverAppBar which was cutting off stats
+      appBar: _buildAppBar(),
+
+      body: Column(
+        children: [
+          // FIX 2 — stats row sits outside scroll, never gets clipped
+          _buildStatsRow(),
+
+          // FIX 3 — tab bar sits below stats with proper breathing room
+          _buildTabBar(),
+
+          // scrollable content
+          Expanded(child: _buildBody()),
         ],
-        body: _buildBody(),
       ),
     );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // STATS ROW
+  // APP BAR
   // ─────────────────────────────────────────────────────────────────────────
 
-  Widget _buildStatsRow() {
-    return Row(
-      children: [
-        _buildStatChip('📹', '$_totalVideos', 'Total'),
-        SizedBox(width: 10.w),
-        _buildStatChip('✅', '$_completedCount', 'Done'),
-        SizedBox(width: 10.w),
-        _buildStatChip('⏳', '$_processingCount', 'Processing'),
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      title: const Text('My Videos'),
+      centerTitle: true,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.sort_rounded),
+          tooltip: 'Sort',
+          onPressed: _showSortSheet,
+        ),
+        IconButton(
+          icon: _isRefreshing
+              ? SizedBox(
+                  width: 18.w,
+                  height: 18.w,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppTheme.primaryColor,
+                  ),
+                )
+              : const Icon(Icons.refresh_rounded),
+          onPressed: _isRefreshing ? null : _refresh,
+        ),
+        SizedBox(width: 4.w),
       ],
     );
   }
 
-  Widget _buildStatChip(String emoji, String count, String label) {
+  // ─────────────────────────────────────────────────────────────────────────
+  // STATS ROW — FIX 2: proper padding, never clipped
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildStatsRow() {
+    return Container(
+      // FIX 4 — gradient background for visual polish
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppTheme.primaryColor.withOpacity(0.08),
+            Colors.transparent,
+          ],
+        ),
+      ),
+      padding: EdgeInsets.fromLTRB(16.w, 14.h, 16.w, 14.h),
+      child: Row(
+        children: [
+          _buildStatChip('📹', '$_totalVideos', 'Total'),
+          SizedBox(width: 10.w),
+          _buildStatChip('✅', '$_completedCount', 'Done'),
+          SizedBox(width: 10.w),
+          _buildStatChip('⏳', '$_processingCount', 'Processing'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatChip(
+      String emoji, String count, String label) {
     return Expanded(
       child: Container(
-        padding: EdgeInsets.symmetric(vertical: 10.h, horizontal: 10.w),
+        // FIX 5 — consistent fixed height, never squeezed
+        padding:
+            EdgeInsets.symmetric(vertical: 10.h, horizontal: 8.w),
         decoration: BoxDecoration(
           color: Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(12.r),
+          borderRadius: BorderRadius.circular(14.r),
           border: Border.all(
-              color: AppTheme.primaryColor.withOpacity(0.1)),
+              color: AppTheme.primaryColor.withOpacity(0.12)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(emoji, style: TextStyle(fontSize: 16.sp)),
-            SizedBox(height: 2.h),
+            Text(emoji, style: TextStyle(fontSize: 18.sp)),
+            SizedBox(height: 4.h),
             Text(
               count,
               style: TextStyle(
-                fontSize: 18.sp,
+                fontSize: 20.sp,
                 fontWeight: FontWeight.bold,
                 color: AppTheme.primaryColor,
               ),
             ),
+            SizedBox(height: 2.h),
             Text(
               label,
-              style: TextStyle(fontSize: 10.sp, color: Colors.grey),
+              style:
+                  TextStyle(fontSize: 10.sp, color: Colors.grey),
             ),
           ],
         ),
@@ -267,33 +296,52 @@ class _VideosScreenState extends State<VideosScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // TAB BAR
+  // TAB BAR — FIX 3: tabs no longer squished, all 4 visible
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildTabBar() {
     return Container(
-      color: Theme.of(context).scaffoldBackgroundColor,
+      decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        border: Border(
+          bottom: BorderSide(
+            color: Colors.grey.withOpacity(0.12),
+            width: 1,
+          ),
+        ),
+      ),
+      // FIX 6 — consistent height for the tab bar container
+      height: 52.h,
       child: TabBar(
         controller: _tabController,
         isScrollable: true,
+        // FIX 7 — tabAlignment ensures tabs start from left
+        tabAlignment: TabAlignment.start,
         indicatorSize: TabBarIndicatorSize.label,
+        dividerColor: Colors.transparent,
         indicator: BoxDecoration(
           color: AppTheme.primaryColor,
           borderRadius: BorderRadius.circular(20.r),
         ),
         labelColor: Colors.white,
         unselectedLabelColor: Colors.grey,
-        labelStyle:
-            TextStyle(fontSize: 12.sp, fontWeight: FontWeight.w600),
-        padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 6.h),
+        labelStyle: TextStyle(
+            fontSize: 12.sp, fontWeight: FontWeight.w600),
+        unselectedLabelStyle: TextStyle(fontSize: 12.sp),
+        // FIX 8 — reduced horizontal padding so all 4 tabs fit
+        padding:
+            EdgeInsets.symmetric(horizontal: 12.w, vertical: 6.h),
         tabs: _tabs
-            .map((t) => Tab(
-                  child: Container(
-                    padding: EdgeInsets.symmetric(
-                        horizontal: 12.w, vertical: 4.h),
-                    child: Text(t.label),
-                  ),
-                ))
+            .map(
+              (t) => Tab(
+                child: Container(
+                  // FIX 9 — consistent tab chip padding
+                  padding: EdgeInsets.symmetric(
+                      horizontal: 14.w, vertical: 4.h),
+                  child: Text(t.label),
+                ),
+              ),
+            )
             .toList(),
       ),
     );
@@ -314,12 +362,14 @@ class _VideosScreenState extends State<VideosScreen>
       child: _videos.isEmpty
           ? _buildEmptyState()
           : ListView.builder(
-              padding: EdgeInsets.fromLTRB(16.w, 12.h, 16.w, 100.h),
+              // FIX 10 — comfortable list padding
+              padding: EdgeInsets.fromLTRB(
+                  14.w, 14.h, 14.w, 100.h),
               itemCount: _videos.length + (_hasMore ? 1 : 0),
               itemBuilder: (context, index) {
                 if (index == _videos.length) {
                   return Padding(
-                    padding: EdgeInsets.all(16.w),
+                    padding: EdgeInsets.all(20.w),
                     child: const Center(
                         child: CircularProgressIndicator()),
                   );
@@ -331,7 +381,7 @@ class _VideosScreenState extends State<VideosScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // VIDEO CARD
+  // VIDEO CARD — FIX 11: better internal spacing throughout
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildVideoCard(dynamic video, int index) {
@@ -342,42 +392,45 @@ class _VideosScreenState extends State<VideosScreen>
     final createdAt = video['created_at'] as String?;
     final niche = video['niche'] as String? ?? '';
     final style = video['style'] as String? ?? '';
-    final progress = (video['progress'] as num?)?.toDouble() ?? 0.0;
+    final progress =
+        (video['progress'] as num?)?.toDouble() ?? 0.0;
 
     return Container(
-      margin: EdgeInsets.only(bottom: 14.h),
+      // FIX 12 — more breathing room between cards
+      margin: EdgeInsets.only(bottom: 16.h),
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(18.r),
+        borderRadius: BorderRadius.circular(20.r),
         border: Border.all(
-          color: _statusColor(status).withOpacity(0.15),
+          color: _statusColor(status).withOpacity(0.18),
           width: 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 10,
+            color: Colors.black.withOpacity(0.07),
+            blurRadius: 12,
             offset: const Offset(0, 4),
           ),
         ],
       ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(18.r),
+        borderRadius: BorderRadius.circular(20.r),
         onTap: () => _openVideo(video),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Thumbnail / status area ─────────────────────────
+            // ── Thumbnail ─────────────────────────────────────
             ClipRRect(
-              borderRadius:
-                  BorderRadius.vertical(top: Radius.circular(18.r)),
+              borderRadius: BorderRadius.vertical(
+                  top: Radius.circular(20.r)),
               child: SizedBox(
-                height: 160.h,
+                // FIX 13 — slightly shorter thumbnail, more space for info
+                height: 155.h,
                 width: double.infinity,
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    // Thumbnail
+                    // Thumbnail image
                     thumbnail != null && thumbnail.isNotEmpty
                         ? Image.network(
                             thumbnail,
@@ -387,7 +440,7 @@ class _VideosScreenState extends State<VideosScreen>
                           )
                         : _buildThumbnailPlaceholder(niche),
 
-                    // Dark overlay
+                    // Dark gradient overlay
                     Container(
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
@@ -395,20 +448,20 @@ class _VideosScreenState extends State<VideosScreen>
                           end: Alignment.bottomCenter,
                           colors: [
                             Colors.transparent,
-                            Colors.black.withOpacity(0.6),
+                            Colors.black.withOpacity(0.55),
                           ],
                         ),
                       ),
                     ),
 
-                    // Status badge top-left
+                    // Status badge — top left
                     Positioned(
                       top: 10,
                       left: 10,
                       child: _buildStatusBadge(status),
                     ),
 
-                    // Duration badge top-right
+                    // Duration — top right
                     if (duration > 0)
                       Positioned(
                         top: 10,
@@ -418,7 +471,8 @@ class _VideosScreenState extends State<VideosScreen>
                               horizontal: 8.w, vertical: 4.h),
                           decoration: BoxDecoration(
                             color: Colors.black54,
-                            borderRadius: BorderRadius.circular(8.r),
+                            borderRadius:
+                                BorderRadius.circular(8.r),
                           ),
                           child: Text(
                             _formatDuration(duration),
@@ -431,25 +485,27 @@ class _VideosScreenState extends State<VideosScreen>
                         ),
                       ),
 
-                    // Play button center (only for completed)
+                    // Play button — completed
                     if (status == 'completed')
                       Center(
                         child: Container(
-                          width: 48.w,
-                          height: 48.w,
+                          width: 50.w,
+                          height: 50.w,
                           decoration: BoxDecoration(
                             color: Colors.white.withOpacity(0.2),
                             shape: BoxShape.circle,
                             border: Border.all(
                                 color: Colors.white54, width: 2),
                           ),
-                          child: Icon(Icons.play_arrow,
-                              color: Colors.white, size: 28.w),
+                          child: Icon(Icons.play_arrow_rounded,
+                              color: Colors.white, size: 30.w),
                         ),
                       ),
 
-                    // Progress bar for processing
-                    if (status == 'processing' || status == 'pending')
+                    // Progress bar — processing / pending
+                    if (status == 'processing' ||
+                        status == 'pending' ||
+                        status.contains('generating'))
                       Positioned(
                         bottom: 0,
                         left: 0,
@@ -458,30 +514,29 @@ class _VideosScreenState extends State<VideosScreen>
                           children: [
                             Padding(
                               padding: EdgeInsets.symmetric(
-                                  horizontal: 12.w),
+                                  horizontal: 14.w, vertical: 6.h),
                               child: Row(
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
-                                    'Generating...',
+                                    _progressLabel(status),
                                     style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 11.sp,
-                                    ),
+                                        color: Colors.white,
+                                        fontSize: 11.sp),
                                   ),
-                                  Text(
-                                    '${(progress * 100).toInt()}%',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 11.sp,
-                                      fontWeight: FontWeight.w600,
+                                  if (progress > 0)
+                                    Text(
+                                      '${(progress * 100).toInt()}%',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11.sp,
+                                        fontWeight: FontWeight.w700,
+                                      ),
                                     ),
-                                  ),
                                 ],
                               ),
                             ),
-                            SizedBox(height: 4.h),
                             LinearProgressIndicator(
                               value: progress > 0 ? progress : null,
                               backgroundColor:
@@ -497,18 +552,18 @@ class _VideosScreenState extends State<VideosScreen>
                     if (status == 'failed')
                       Center(
                         child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisAlignment:
+                              MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.error_outline,
+                            Icon(Icons.error_outline_rounded,
                                 color: Colors.red.shade300,
-                                size: 32.w),
-                            SizedBox(height: 4.h),
+                                size: 36.w),
+                            SizedBox(height: 6.h),
                             Text(
                               'Generation failed',
                               style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 12.sp,
-                              ),
+                                  color: Colors.white,
+                                  fontSize: 12.sp),
                             ),
                           ],
                         ),
@@ -518,13 +573,17 @@ class _VideosScreenState extends State<VideosScreen>
               ),
             ),
 
-            // ── Info area ───────────────────────────────────────
+            // ── Info area ─────────────────────────────────────
             Padding(
-              padding: EdgeInsets.all(14.w),
+              // FIX 14 — more generous info area padding
+              padding: EdgeInsets.fromLTRB(
+                  14.w, 12.h, 14.w, 14.h),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Title row
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
                         child: Text(
@@ -532,6 +591,7 @@ class _VideosScreenState extends State<VideosScreen>
                           style: TextStyle(
                             fontSize: 14.sp,
                             fontWeight: FontWeight.w600,
+                            height: 1.3,
                           ),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
@@ -546,19 +606,21 @@ class _VideosScreenState extends State<VideosScreen>
                             color: Colors.grey.withOpacity(0.1),
                             shape: BoxShape.circle,
                           ),
-                          child: Icon(Icons.more_vert,
+                          child: Icon(Icons.more_vert_rounded,
                               size: 18.w, color: Colors.grey),
                         ),
                       ),
                     ],
                   ),
 
-                  SizedBox(height: 8.h),
+                  // FIX 15 — more space before chips
+                  SizedBox(height: 10.h),
 
                   // Meta chips
                   Wrap(
-                    spacing: 6.w,
-                    runSpacing: 4.h,
+                    // FIX 16 — better chip spacing
+                    spacing: 8.w,
+                    runSpacing: 6.h,
                     children: [
                       if (niche.isNotEmpty)
                         _buildMetaChip(
@@ -566,8 +628,7 @@ class _VideosScreenState extends State<VideosScreen>
                       if (style.isNotEmpty)
                         _buildMetaChip('🎨', _capitalize(style)),
                       if (createdAt != null)
-                        _buildMetaChip(
-                            '🕒', _formatDate(createdAt)),
+                        _buildMetaChip('🕒', _formatDate(createdAt)),
                     ],
                   ),
                 ],
@@ -577,6 +638,20 @@ class _VideosScreenState extends State<VideosScreen>
         ),
       ),
     );
+  }
+
+  // FIX 17 — map raw backend status strings to friendly labels
+  String _progressLabel(String status) {
+    return switch (status) {
+      'pending'            => '⏳ Queued...',
+      'processing'         => '⚙️ Processing...',
+      'script_generating'  => '✍️ Writing script...',
+      'images_generating'  => '🎨 Generating images...',
+      'voice_generating'   => '🎙️ Generating voice...',
+      'video_composing'    => '🎬 Composing video...',
+      'uploading'          => '☁️ Uploading...',
+      _                    => '⏳ Generating...',
+    };
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -590,31 +665,34 @@ class _VideosScreenState extends State<VideosScreen>
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            AppTheme.primaryColor.withOpacity(0.3),
-            AppTheme.accentColor.withOpacity(0.2),
+            AppTheme.primaryColor.withOpacity(0.25),
+            AppTheme.accentColor.withOpacity(0.15),
           ],
         ),
       ),
       child: Center(
         child: Text(
           _nicheEmoji(niche),
-          style: TextStyle(fontSize: 48.sp),
+          style: TextStyle(fontSize: 52.sp),
         ),
       ),
     );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // STATUS BADGE
+  // STATUS BADGE — FIX 18: maps raw backend statuses nicely
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildStatusBadge(String status) {
     final color = _statusColor(status);
-    final label = _statusLabel(status);
+    // FIX 18 — convert raw backend status like 'images_generating'
+    // to a clean readable label
+    final label = _statusBadgeLabel(status);
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
+      padding: EdgeInsets.symmetric(
+          horizontal: 9.w, vertical: 5.h),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.85),
+        color: color.withOpacity(0.88),
         borderRadius: BorderRadius.circular(8.r),
       ),
       child: Text(
@@ -623,33 +701,35 @@ class _VideosScreenState extends State<VideosScreen>
           color: Colors.white,
           fontSize: 10.sp,
           fontWeight: FontWeight.w700,
-          letterSpacing: 0.3,
+          letterSpacing: 0.2,
         ),
       ),
     );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // META CHIP
+  // META CHIP — FIX 19: bigger touch target + better spacing
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildMetaChip(String emoji, String label) {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 3.h),
+      padding:
+          EdgeInsets.symmetric(horizontal: 10.w, vertical: 5.h),
       decoration: BoxDecoration(
-        color: AppTheme.primaryColor.withOpacity(0.07),
+        color: AppTheme.primaryColor.withOpacity(0.08),
         borderRadius: BorderRadius.circular(20.r),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(emoji, style: TextStyle(fontSize: 11.sp)),
-          SizedBox(width: 4.w),
+          SizedBox(width: 5.w),
           Text(
             label,
             style: TextStyle(
               fontSize: 11.sp,
               color: AppTheme.primaryColor,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ],
@@ -687,28 +767,28 @@ class _VideosScreenState extends State<VideosScreen>
               SizedBox(height: 20.h),
               Text(
                 isFiltered
-                    ? 'No ${_statusLabel(_selectedStatus!)} videos'
+                    ? 'No ${_statusBadgeLabel(_selectedStatus!)} videos'
                     : 'No videos yet',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+                style:
+                    Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
               ),
               SizedBox(height: 8.h),
               Text(
                 isFiltered
                     ? 'Try selecting a different filter'
                     : 'Tap Create to generate your first video!',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Colors.grey,
-                    ),
+                style:
+                    Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Colors.grey,
+                        ),
                 textAlign: TextAlign.center,
               ),
               if (isFiltered) ...[
                 SizedBox(height: 20.h),
                 TextButton.icon(
-                  onPressed: () {
-                    _tabController.animateTo(0);
-                  },
+                  onPressed: () => _tabController.animateTo(0),
                   icon: const Icon(Icons.clear),
                   label: const Text('Clear Filter'),
                 ),
@@ -726,26 +806,34 @@ class _VideosScreenState extends State<VideosScreen>
 
   Widget _buildSkeletonLoader() {
     return ListView.builder(
-      padding: EdgeInsets.all(16.w),
-      itemCount: 4,
+      padding: EdgeInsets.all(14.w),
+      itemCount: 3,
       itemBuilder: (_, __) => Container(
-        margin: EdgeInsets.only(bottom: 14.h),
+        margin: EdgeInsets.only(bottom: 16.h),
         decoration: BoxDecoration(
           color: Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(18.r),
+          borderRadius: BorderRadius.circular(20.r),
         ),
         child: Column(
           children: [
-            _shimmer(double.infinity, 160.h,
-                topLeft: 18.r, topRight: 18.r),
+            _shimmer(double.infinity, 155.h,
+                topLeft: 20.r, topRight: 20.r),
             Padding(
               padding: EdgeInsets.all(14.w),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _shimmer(200.w, 16.h),
+                  _shimmer(double.infinity, 16.h),
                   SizedBox(height: 8.h),
-                  _shimmer(140.w, 12.h),
+                  _shimmer(180.w, 12.h),
+                  SizedBox(height: 10.h),
+                  Row(
+                    children: [
+                      _shimmer(70.w, 24.h),
+                      SizedBox(width: 8.w),
+                      _shimmer(70.w, 24.h),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -764,7 +852,7 @@ class _VideosScreenState extends State<VideosScreen>
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: Colors.grey.withOpacity(0.15),
+        color: Colors.grey.withOpacity(0.13),
         borderRadius: BorderRadius.only(
           topLeft: Radius.circular(topLeft),
           topRight: Radius.circular(topRight),
@@ -787,7 +875,7 @@ class _VideosScreenState extends State<VideosScreen>
       context: context,
       backgroundColor: Colors.transparent,
       builder: (_) => Container(
-        padding: EdgeInsets.symmetric(vertical: 12.h),
+        padding: EdgeInsets.symmetric(vertical: 16.h),
         decoration: BoxDecoration(
           color: Theme.of(context).scaffoldBackgroundColor,
           borderRadius:
@@ -796,7 +884,6 @@ class _VideosScreenState extends State<VideosScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Handle
             Container(
               width: 36.w,
               height: 4.h,
@@ -806,49 +893,42 @@ class _VideosScreenState extends State<VideosScreen>
                 borderRadius: BorderRadius.circular(2.r),
               ),
             ),
-
-            // Title
             Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20.w),
+              padding: EdgeInsets.symmetric(
+                  horizontal: 20.w, vertical: 4.h),
               child: Text(
                 title,
                 style: TextStyle(
-                  fontSize: 15.sp,
-                  fontWeight: FontWeight.bold,
-                ),
+                    fontSize: 15.sp, fontWeight: FontWeight.bold),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-
             SizedBox(height: 8.h),
-
             if (status == 'completed') ...[
-              _optionTile(Icons.play_circle_outline, 'Play Video',
-                  Colors.green, () => _openVideo(video)),
+              _optionTile(Icons.play_circle_outline_rounded,
+                  'Play Video', Colors.green, () => _openVideo(video)),
               _optionTile(Icons.download_outlined, 'Download',
                   AppTheme.primaryColor, () => _downloadVideo(video)),
               _optionTile(Icons.share_outlined, 'Share',
                   Colors.blue, () => _shareVideo(video)),
-              _optionTile(Icons.copy_outlined, 'Copy Video Link',
+              _optionTile(Icons.copy_outlined, 'Copy Link',
                   Colors.orange, () => _copyVideoLink(video)),
             ],
             if (status == 'failed')
-              _optionTile(Icons.refresh, 'Regenerate',
+              _optionTile(Icons.refresh_rounded, 'Regenerate',
                   Colors.orange, () => _regenerateVideo(video)),
-            if (status == 'processing' || status == 'pending')
-              _optionTile(Icons.info_outline, 'View Progress',
-                  AppTheme.primaryColor, () => _showProgress(video)),
-
-            Divider(height: 1, color: Colors.grey.withOpacity(0.1)),
-
-            _optionTile(
-              Icons.delete_outline,
-              'Delete Video',
-              Colors.red,
-              () => _showDeleteDialog(video),
-            ),
-
+            if (status == 'processing' ||
+                status == 'pending' ||
+                status.contains('generating'))
+              _optionTile(Icons.info_outline_rounded,
+                  'View Progress', AppTheme.primaryColor,
+                  () => _showProgress(video)),
+            Divider(
+                height: 8, color: Colors.grey.withOpacity(0.1)),
+            _optionTile(Icons.delete_outline_rounded,
+                'Delete Video', Colors.red,
+                () => _showDeleteDialog(video)),
             SizedBox(height: 8.h),
           ],
         ),
@@ -859,17 +939,22 @@ class _VideosScreenState extends State<VideosScreen>
   Widget _optionTile(
       IconData icon, String label, Color color, VoidCallback onTap) {
     return ListTile(
+      contentPadding:
+          EdgeInsets.symmetric(horizontal: 20.w, vertical: 2.h),
       leading: Container(
-        width: 36.w,
-        height: 36.w,
+        width: 38.w,
+        height: 38.w,
         decoration: BoxDecoration(
           color: color.withOpacity(0.1),
           borderRadius: BorderRadius.circular(10.r),
         ),
-        child: Icon(icon, size: 18.w, color: color),
+        child: Icon(icon, size: 19.w, color: color),
       ),
       title: Text(label,
-          style: TextStyle(fontSize: 14.sp, color: color)),
+          style: TextStyle(
+              fontSize: 14.sp,
+              color: color,
+              fontWeight: FontWeight.w500)),
       onTap: () {
         Navigator.pop(context);
         onTap();
@@ -886,7 +971,7 @@ class _VideosScreenState extends State<VideosScreen>
       context: context,
       backgroundColor: Colors.transparent,
       builder: (_) => Container(
-        padding: EdgeInsets.all(20.w),
+        padding: EdgeInsets.all(24.w),
         decoration: BoxDecoration(
           color: Theme.of(context).scaffoldBackgroundColor,
           borderRadius:
@@ -897,28 +982,32 @@ class _VideosScreenState extends State<VideosScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Sort By',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    )),
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.bold)),
             SizedBox(height: 12.h),
             ...[
-              ('newest', '🆕 Newest First'),
-              ('oldest', '📅 Oldest First'),
+              ('newest',  '🆕 Newest First'),
+              ('oldest',  '📅 Oldest First'),
               ('longest', '⏱️ Longest Duration'),
-            ].map((s) => ListTile(
-                  title: Text(s.$2),
-                  trailing: _sortBy == s.$1
-                      ? Icon(Icons.check,
-                          color: AppTheme.primaryColor)
-                      : null,
-                  onTap: () {
-                    Navigator.pop(context);
-                    setState(() {
-                      _sortBy = s.$1;
-                      _sortVideos();
-                    });
-                  },
-                )),
+            ].map(
+              (s) => ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(s.$2),
+                trailing: _sortBy == s.$1
+                    ? Icon(Icons.check,
+                        color: AppTheme.primaryColor)
+                    : null,
+                onTap: () {
+                  Navigator.pop(context);
+                  setState(() {
+                    _sortBy = s.$1;
+                    _sortVideos();
+                  });
+                },
+              ),
+            ),
             SizedBox(height: 8.h),
           ],
         ),
@@ -930,14 +1019,14 @@ class _VideosScreenState extends State<VideosScreen>
     setState(() {
       switch (_sortBy) {
         case 'oldest':
-          _videos.sort((a, b) =>
-              (a['created_at'] ?? '').compareTo(b['created_at'] ?? ''));
+          _videos.sort((a, b) => (a['created_at'] ?? '')
+              .compareTo(b['created_at'] ?? ''));
         case 'longest':
           _videos.sort((a, b) =>
               (b['duration'] ?? 0).compareTo(a['duration'] ?? 0));
         default:
-          _videos.sort((a, b) =>
-              (b['created_at'] ?? '').compareTo(a['created_at'] ?? ''));
+          _videos.sort((a, b) => (b['created_at'] ?? '')
+              .compareTo(a['created_at'] ?? ''));
       }
     });
   }
@@ -952,7 +1041,6 @@ class _VideosScreenState extends State<VideosScreen>
       _showToast('⏳ Video is not ready yet', error: true);
       return;
     }
-    // TODO: push to video player screen
     _showToast('▶️ Opening video player...');
   }
 
@@ -994,6 +1082,7 @@ class _VideosScreenState extends State<VideosScreen>
   void _showProgress(dynamic video) {
     final progress =
         ((video['progress'] as num?)?.toDouble() ?? 0.0) * 100;
+    final status = video['status'] as String? ?? '';
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
@@ -1008,11 +1097,22 @@ class _VideosScreenState extends State<VideosScreen>
               color: AppTheme.primaryColor,
             ),
             SizedBox(height: 16.h),
-            Text('${progress.toInt()}% complete'),
+            Text(
+              _progressLabel(status),
+              style: TextStyle(
+                  fontSize: 13.sp,
+                  fontWeight: FontWeight.w600),
+            ),
+            SizedBox(height: 6.h),
+            Text(
+              '${progress.toInt()}% complete',
+              style: TextStyle(fontSize: 13.sp),
+            ),
             SizedBox(height: 8.h),
             Text(
               'This may take a few minutes',
-              style: TextStyle(color: Colors.grey, fontSize: 12.sp),
+              style: TextStyle(
+                  color: Colors.grey, fontSize: 12.sp),
             ),
           ],
         ),
@@ -1044,11 +1144,13 @@ class _VideosScreenState extends State<VideosScreen>
             onPressed: () async {
               Navigator.pop(context);
               try {
-                await _apiService.deleteVideo(video['id'].toString());
+                await _apiService
+                    .deleteVideo(video['id'].toString());
                 _showToast('🗑️ Video deleted');
                 await _loadVideos(refresh: true);
               } catch (e) {
-                _showToast(_apiService.handleError(e), error: true);
+                _showToast(_apiService.handleError(e),
+                    error: true);
               }
             },
             style: ElevatedButton.styleFrom(
@@ -1065,12 +1167,29 @@ class _VideosScreenState extends State<VideosScreen>
   // HELPERS
   // ─────────────────────────────────────────────────────────────────────────
 
-  Color _statusColor(String status) => switch (status) {
-        'completed'  => Colors.green,
-        'processing' => Colors.orange,
-        'pending'    => Colors.blue,
-        'failed'     => Colors.red,
-        _            => Colors.grey,
+  Color _statusColor(String status) {
+    if (status == 'completed') return Colors.green;
+    if (status == 'failed') return Colors.red;
+    if (status == 'processing' ||
+        status == 'pending' ||
+        status.contains('generating') ||
+        status.contains('composing') ||
+        status.contains('uploading')) return Colors.orange;
+    return Colors.grey;
+  }
+
+  // FIX 18 — clean labels for ALL raw backend status strings
+  String _statusBadgeLabel(String status) => switch (status) {
+        'completed'         => '✅ Done',
+        'failed'            => '❌ Failed',
+        'processing'        => '⏳ Processing',
+        'pending'           => '🔵 Pending',
+        'script_generating' => '✍️ Script',
+        'images_generating' => '🎨 Images',
+        'voice_generating'  => '🎙️ Voice',
+        'video_composing'   => '🎬 Composing',
+        'uploading'         => '☁️ Uploading',
+        _                   => '⏳ Processing',
       };
 
   String _statusLabel(String status) => switch (status) {
@@ -1078,10 +1197,11 @@ class _VideosScreenState extends State<VideosScreen>
         'processing' => '⏳ Processing',
         'pending'    => '🔵 Pending',
         'failed'     => '❌ Failed',
-        _            => status,
+        _            => _statusBadgeLabel(status),
       };
 
-  String _nicheEmoji(String niche) => switch (niche.toLowerCase()) {
+  String _nicheEmoji(String niche) =>
+      switch (niche.toLowerCase()) {
         'fitness'    => '💪',
         'cooking'    => '🍳',
         'tech'       => '💻',
@@ -1102,16 +1222,13 @@ class _VideosScreenState extends State<VideosScreen>
   String _formatDuration(int seconds) {
     final m = seconds ~/ 60;
     final s = seconds % 60;
-    return m > 0
-        ? '$m:${s.toString().padLeft(2, '0')}'
-        : '${s}s';
+    return m > 0 ? '$m:${s.toString().padLeft(2, '0')}' : '${s}s';
   }
 
   String _formatDate(String iso) {
     try {
       final dt = DateTime.parse(iso).toLocal();
-      final now = DateTime.now();
-      final diff = now.difference(dt);
+      final diff = DateTime.now().difference(dt);
       if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
       if (diff.inHours < 24) return '${diff.inHours}h ago';
       if (diff.inDays < 7) return '${diff.inDays}d ago';
@@ -1125,7 +1242,6 @@ class _VideosScreenState extends State<VideosScreen>
       s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
 }
 
-// Simple data class for tabs
 class _StatusTab {
   final String? status;
   final String label;
