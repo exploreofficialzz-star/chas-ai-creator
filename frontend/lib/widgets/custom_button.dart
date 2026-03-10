@@ -5,7 +5,7 @@ import '../config/theme.dart';
 
 class CustomButton extends StatelessWidget {
   final String text;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed; // FIX - made nullable to support disabled state
   final bool isLoading;
   final bool isOutlined;
   final IconData? icon;
@@ -15,7 +15,7 @@ class CustomButton extends StatelessWidget {
   const CustomButton({
     super.key,
     required this.text,
-    required this.onPressed,
+    this.onPressed, // FIX - no longer required, can be null to disable button
     this.isLoading = false,
     this.isOutlined = false,
     this.icon,
@@ -27,6 +27,7 @@ class CustomButton extends StatelessWidget {
   Widget build(BuildContext context) {
     if (isOutlined) {
       return OutlinedButton(
+        // FIX - null when loading OR when onPressed is null (disabled)
         onPressed: isLoading ? null : onPressed,
         style: OutlinedButton.styleFrom(
           foregroundColor: textColor ?? AppTheme.primaryColor,
@@ -44,6 +45,7 @@ class CustomButton extends StatelessWidget {
     }
 
     return ElevatedButton(
+      // FIX - null when loading OR when onPressed is null (disabled)
       onPressed: isLoading ? null : onPressed,
       style: ElevatedButton.styleFrom(
         backgroundColor: backgroundColor ?? AppTheme.primaryColor,
