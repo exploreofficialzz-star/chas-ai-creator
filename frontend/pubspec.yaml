@@ -41,7 +41,6 @@ dependencies:
   
   # Authentication
   google_sign_in: ^6.1.6
-  sign_in_with_apple: ^5.0.0
   
   # Storage
   shared_preferences: ^2.2.2
