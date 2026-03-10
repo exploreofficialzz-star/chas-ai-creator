@@ -47,6 +47,15 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
     _loadOptions();
   }
 
+  // FIX 1 - added dispose to prevent memory leaks from controllers
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _descriptionController.dispose();
+    _instructionsController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadOptions() async {
     setState(() => _isLoading = true);
     
@@ -122,7 +131,6 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
         const SnackBar(content: Text('Video generation started!')),
       );
       
-      // Reset form
       _resetForm();
     } catch (e) {
       setState(() => _isGenerating = false);
@@ -188,12 +196,12 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
                     children: [
                       if (_previewScript != null) ...[
                         Text(
-                          _previewScript!['script']['title'] ?? 'Untitled',
+                          _previewScript!['script']?['title'] ?? 'Untitled',
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                         SizedBox(height: 8.h),
                         Text(
-                          _previewScript!['script']['description'] ?? '',
+                          _previewScript!['script']?['description'] ?? '',
                           style: Theme.of(context).textTheme.bodyMedium,
                         ),
                         SizedBox(height: 24.h),
@@ -204,7 +212,9 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         SizedBox(height: 12.h),
-                        ...(_previewScript!['script']['scenes'] as List)
+
+                        // FIX 2 - null safety on scenes list to prevent crash
+                        ...((_previewScript!['script']?['scenes'] as List?) ?? [])
                             .map((scene) => _buildSceneCard(scene)),
                         
                         SizedBox(height: 24.h),
@@ -220,7 +230,7 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
                             height: 200.h,
                             child: ListView.builder(
                               scrollDirection: Axis.horizontal,
-                              itemCount: _previewScript!['sample_images'].length,
+                              itemCount: (_previewScript!['sample_images'] as List).length,
                               itemBuilder: (context, index) {
                                 final image = _previewScript!['sample_images'][index];
                                 return Container(
@@ -469,7 +479,6 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
                   _buildSectionTitle('Options'),
                   SizedBox(height: 12.h),
                   
-                  // Captions
                   SwitchListTile(
                     title: const Text('Enable Captions'),
                     subtitle: const Text('Add text overlays to your video'),
@@ -479,7 +488,6 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
                     },
                   ),
                   
-                  // Background Music
                   SwitchListTile(
                     title: const Text('Background Music'),
                     subtitle: const Text('Add AI-selected background music'),
@@ -489,7 +497,6 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
                     },
                   ),
                   
-                  // Character Consistency
                   SwitchListTile(
                     title: const Text('Character Consistency'),
                     subtitle: const Text('Maintain consistent characters across scenes'),
@@ -501,7 +508,6 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
                   
                   SizedBox(height: 24.h),
                   
-                  // Instructions
                   CustomTextField(
                     controller: _instructionsController,
                     label: 'Additional Instructions (Optional)',
@@ -511,17 +517,14 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
                   
                   SizedBox(height: 32.h),
                   
-                  // Actions - FIXED: Properly handle nullable onPressed
+                  // FIX 3 - pass null instead of () {} when generating
+                  // so buttons are properly disabled during loading
                   Row(
                     children: [
                       Expanded(
                         child: CustomButton(
                           text: 'Preview',
-                          // FIX: Use conditional function that returns void Function()?
-                          // But since CustomButton likely expects non-nullable, we use AbsorbPointer approach
-                          onPressed: _isGenerating 
-                            ? () {} // Empty function when loading (button handles disabled state via isLoading)
-                            : _generatePreview,
+                          onPressed: _isGenerating ? null : _generatePreview,
                           isLoading: _isGenerating,
                           isOutlined: true,
                         ),
@@ -530,9 +533,7 @@ class _CreateVideoScreenState extends State<CreateVideoScreen> {
                       Expanded(
                         child: CustomButton(
                           text: 'Create Video',
-                          onPressed: _isGenerating 
-                            ? () {} // Empty function when loading
-                            : _createVideo,
+                          onPressed: _isGenerating ? null : _createVideo,
                           isLoading: _isGenerating,
                         ),
                       ),
