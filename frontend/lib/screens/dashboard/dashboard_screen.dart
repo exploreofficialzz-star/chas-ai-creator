@@ -19,7 +19,6 @@ import '../../widgets/stat_card.dart';
 import '../../widgets/video_card.dart';
 
 class DashboardScreen extends StatefulWidget {
-  // FIX - added callback so dashboard can switch tabs in HomeScreen
   final Function(int)? onNavigate;
   
   const DashboardScreen({super.key, this.onNavigate});
@@ -81,7 +80,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // FIX - helper to switch tabs
   void _navigateTo(int index) {
     if (widget.onNavigate != null) {
       widget.onNavigate!(index);
@@ -107,7 +105,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
             actions: [
-              // Credits Badge
               Container(
                 margin: EdgeInsets.only(right: 8.w),
                 padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 6.h),
@@ -135,14 +132,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
               ),
-              
-              // Notifications
               IconButton(
                 icon: const Icon(Icons.notifications_outlined),
-                onPressed: () {
-                  // FIX - navigate to settings tab (index 3)
-                  _navigateTo(3);
-                },
+                onPressed: () => _navigateTo(3),
               ),
             ],
           ),
@@ -158,44 +150,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Welcome Section
                               _buildWelcomeSection(user),
-                              
                               SizedBox(height: 20.h),
-                              
-                              // Banner Ad
                               const BannerAdContainer(),
-                              
                               SizedBox(height: 20.h),
-                              
-                              // Stats Section
                               _buildStatsSection(),
-                              
                               SizedBox(height: 20.h),
-                              
-                              // Watch Ad for Credits
                               RewardAdButton(
                                 onRewardEarned: _onCreditsEarned,
                               ),
-                              
                               SizedBox(height: 20.h),
-                              
-                              // Quick Actions
                               _buildQuickActions(),
-                              
                               SizedBox(height: 20.h),
-                              
-                              // Banner Ad 2
                               const BannerAdContainer(isLarge: true),
-                              
                               SizedBox(height: 20.h),
-                              
-                              // Recent Videos
                               _buildRecentVideos(),
-                              
                               SizedBox(height: 20.h),
-                              
-                              // Bottom Banner Ad
                               const BannerAdContainer(),
                             ],
                           ),
@@ -282,11 +252,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      Icons.workspace_premium,
-                      size: 16.w,
-                      color: Colors.white,
-                    ),
+                    Icon(Icons.workspace_premium, size: 16.w, color: Colors.white),
                     SizedBox(width: 8.w),
                     Text(
                       (user?.subscriptionTier ?? 'FREE').toUpperCase(),
@@ -309,11 +275,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      Icons.video_call,
-                      size: 16.w,
-                      color: Colors.white,
-                    ),
+                    Icon(Icons.video_call, size: 16.w, color: Colors.white),
                     SizedBox(width: 8.w),
                     Text(
                       '${_usageStats?['remaining_daily_videos'] ?? 0} left today',
@@ -409,7 +371,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 title: 'Create\nVideo',
                 icon: Icons.add_circle,
                 color: AppTheme.primaryColor,
-                // FIX - navigate to Create tab (index 2)
                 onTap: () => _navigateTo(2),
               ),
             ),
@@ -419,7 +380,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 title: 'Schedule',
                 icon: Icons.schedule,
                 color: AppTheme.accentColor,
-                // FIX - navigate to My Videos tab (index 1)
                 onTap: () => _navigateTo(1),
               ),
             ),
@@ -429,7 +389,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 title: 'Upgrade',
                 icon: Icons.workspace_premium,
                 color: AppTheme.secondaryColor,
-                // FIX - navigate to Settings tab (index 3)
                 onTap: () => _navigateTo(3),
               ),
             ),
@@ -453,7 +412,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
             TextButton(
-              // FIX - navigate to My Videos tab (index 1)
               onPressed: () => _navigateTo(1),
               child: const Text('See All →'),
             ),
@@ -492,7 +450,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                   SizedBox(height: 16.h),
                   ElevatedButton.icon(
-                    // FIX - navigate to Create tab (index 2)
                     onPressed: () => _navigateTo(2),
                     icon: const Icon(Icons.add),
                     label: const Text('Create Video'),
@@ -514,7 +471,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 status: video['status'],
                 duration: video['duration'],
                 createdAt: video['created_at'],
-                // FIX - navigate to My Videos tab (index 1)
                 onTap: () => _navigateTo(1),
               );
             },
@@ -572,3 +528,4 @@ class _ActionCard extends StatelessWidget {
       ),
     );
   }
+}
