@@ -10,19 +10,22 @@ from sqlalchemy import (
     DateTime,
     Enum as SQLEnum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     JSON,
     Float,
+    event,
 )
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 
 
+# ─── ENUMS ────────────────────────────────────────────────────────────────────
+
 class VideoStatus(str, Enum):
-    """Video generation status."""
     PENDING = "pending"
     SCRIPT_GENERATING = "script_generating"
     IMAGES_GENERATING = "images_generating"
@@ -35,13 +38,11 @@ class VideoStatus(str, Enum):
 
 
 class VideoType(str, Enum):
-    """Video type options."""
     SILENT = "silent"
     NARRATION = "narration"
 
 
 class VideoStyle(str, Enum):
-    """Video style presets."""
     CARTOON = "cartoon"
     CINEMATIC = "cinematic"
     REALISTIC = "realistic"
@@ -50,99 +51,130 @@ class VideoStyle(str, Enum):
     MINIMAL = "minimal"
 
 
+class SceneStatus(str, Enum):
+    PENDING = "pending"
+    GENERATING = "generating"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+# ─── VIDEO MODEL ──────────────────────────────────────────────────────────────
+
 class Video(Base):
     """Video model for generated content."""
-    
+
     __tablename__ = "videos"
-    
+
+    # FIX 1 - added composite indexes for the most common query patterns
+    __table_args__ = (
+        Index("ix_videos_user_status", "user_id", "status"),
+        Index("ix_videos_user_created", "user_id", "created_at"),
+    )
+
     id = Column(String(36), primary_key=True, index=True)
-    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
-    
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
     # Basic Info
     title = Column(String(200), nullable=True)
     description = Column(Text, nullable=True)
     niche = Column(String(50), nullable=False)
-    
+
     # Video Configuration
-    video_type = Column(SQLEnum(VideoType), default=VideoType.SILENT)
-    duration = Column(Integer, default=30)  # seconds
-    aspect_ratio = Column(String(10), default="9:16")  # 16:9, 9:16, 1:1
-    style = Column(SQLEnum(VideoStyle), default=VideoStyle.CINEMATIC)
-    
+    video_type = Column(SQLEnum(VideoType), default=VideoType.SILENT, nullable=False)
+    duration = Column(Integer, default=30, nullable=False)
+    aspect_ratio = Column(String(10), default="9:16", nullable=False)
+    style = Column(SQLEnum(VideoStyle), default=VideoStyle.CINEMATIC, nullable=False)
+
     # Character Consistency
-    character_consistency_enabled = Column(Boolean, default=False)
+    character_consistency_enabled = Column(Boolean, default=False, nullable=False)
     character_description = Column(Text, nullable=True)
-    
+
     # Captions
-    captions_enabled = Column(Boolean, default=True)
-    caption_style = Column(String(50), default="modern")
-    caption_color = Column(String(20), default="white")
-    caption_emoji_enabled = Column(Boolean, default=True)
-    
+    captions_enabled = Column(Boolean, default=True, nullable=False)
+    caption_style = Column(String(50), default="modern", nullable=False)
+    caption_color = Column(String(20), default="white", nullable=False)
+    caption_emoji_enabled = Column(Boolean, default=True, nullable=False)
+
     # Background Music
-    background_music_enabled = Column(Boolean, default=True)
+    background_music_enabled = Column(Boolean, default=True, nullable=False)
     background_music_url = Column(String(500), nullable=True)
-    background_music_style = Column(String(50), default="upbeat")
-    
+    background_music_style = Column(String(50), default="upbeat", nullable=False)
+
     # User Instructions
     user_instructions = Column(Text, nullable=True)
     scene_priority_notes = Column(Text, nullable=True)
-    
+
     # Generated Content
-    script = Column(JSON, nullable=True)  # Full script with scenes
+    script = Column(JSON, nullable=True)
     narration_text = Column(Text, nullable=True)
-    hashtags = Column(JSON, default=list)
-    
+    # FIX 2 - use lambda for mutable JSON default to avoid shared state bug
+    hashtags = Column(JSON, default=lambda: [])
+
     # Status & Progress
-    status = Column(SQLEnum(VideoStatus), default=VideoStatus.PENDING)
-    progress = Column(Integer, default=0)  # 0-100
+    status = Column(SQLEnum(VideoStatus), default=VideoStatus.PENDING, nullable=False, index=True)
+    progress = Column(Integer, default=0, nullable=False)
     error_message = Column(Text, nullable=True)
-    
+
     # File URLs
     video_url = Column(String(500), nullable=True)
     thumbnail_url = Column(String(500), nullable=True)
-    
+
     # Metadata
-    file_size = Column(Integer, nullable=True)  # bytes
-    resolution = Column(String(20), nullable=True)  # e.g., "1080x1920"
-    fps = Column(Integer, default=24)
-    
+    file_size = Column(Integer, nullable=True)
+    resolution = Column(String(20), nullable=True)
+    fps = Column(Integer, default=24, nullable=False)
+
     # Analytics
-    view_count = Column(Integer, default=0)
-    download_count = Column(Integer, default=0)
-    
+    view_count = Column(Integer, default=0, nullable=False)
+    download_count = Column(Integer, default=0, nullable=False)
+
     # Scheduling
-    is_scheduled = Column(Boolean, default=False)
+    is_scheduled = Column(Boolean, default=False, nullable=False)
     scheduled_for = Column(DateTime, nullable=True)
-    schedule_id = Column(String(36), ForeignKey("video_schedules.id"), nullable=True)
-    
+    # FIX 3 - use_alter=True fixes circular FK dependency between
+    # videos <-> video_schedules that caused table creation order errors
+    schedule_id = Column(
+        String(36),
+        ForeignKey("video_schedules.id", use_alter=True, name="fk_video_schedule_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
-    
+
     # Relationships
     user = relationship("User", back_populates="videos")
-    scenes = relationship("VideoScene", back_populates="video", cascade="all, delete-orphan")
-    schedule = relationship("VideoSchedule", back_populates="videos")
-    
+    scenes = relationship(
+        "VideoScene",
+        back_populates="video",
+        cascade="all, delete-orphan",
+        order_by="VideoScene.scene_number",  # FIX 4 - always return scenes in order
+    )
+    schedule = relationship(
+        "VideoSchedule",
+        back_populates="videos",
+        foreign_keys=[schedule_id],
+    )
+
     def __repr__(self) -> str:
-        return f"<Video(id={self.id}, status={self.status}, user_id={self.user_id})>"
-    
+        return f"<Video(id={self.id}, status={self.status}, niche={self.niche})>"
+
+    # ── Properties ─────────────────────────────────────────────────────────
+
     @property
     def is_completed(self) -> bool:
-        """Check if video generation is completed."""
         return self.status == VideoStatus.COMPLETED
-    
+
     @property
     def is_failed(self) -> bool:
-        """Check if video generation failed."""
         return self.status == VideoStatus.FAILED
-    
+
     @property
     def is_processing(self) -> bool:
-        """Check if video is currently being processed."""
         return self.status in [
             VideoStatus.SCRIPT_GENERATING,
             VideoStatus.IMAGES_GENERATING,
@@ -150,9 +182,28 @@ class Video(Base):
             VideoStatus.AUDIO_GENERATING,
             VideoStatus.COMPOSING,
         ]
-    
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status == VideoStatus.PENDING
+
+    # FIX 5 - added human-readable progress label for frontend display
+    @property
+    def status_label(self) -> str:
+        labels = {
+            VideoStatus.PENDING: "⏳ Waiting to start...",
+            VideoStatus.SCRIPT_GENERATING: "✍️ Writing script...",
+            VideoStatus.IMAGES_GENERATING: "🎨 Generating images...",
+            VideoStatus.VIDEO_GENERATING: "🎬 Creating video clips...",
+            VideoStatus.AUDIO_GENERATING: "🎙️ Generating audio...",
+            VideoStatus.COMPOSING: "🎞️ Composing final video...",
+            VideoStatus.COMPLETED: "✅ Video ready!",
+            VideoStatus.FAILED: "❌ Generation failed",
+            VideoStatus.CANCELLED: "🚫 Cancelled",
+        }
+        return labels.get(self.status, "Unknown")
+
     def to_dict(self) -> Dict[str, Any]:
-        """Convert video to dictionary."""
         return {
             "id": self.id,
             "title": self.title,
@@ -165,56 +216,74 @@ class Video(Base):
             "captions_enabled": self.captions_enabled,
             "background_music_enabled": self.background_music_enabled,
             "status": self.status.value,
+            "status_label": self.status_label,
             "progress": self.progress,
             "video_url": self.video_url,
             "thumbnail_url": self.thumbnail_url,
             "resolution": self.resolution,
+            "view_count": self.view_count,
+            "download_count": self.download_count,
+            "error_message": self.error_message,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }
 
 
+# ─── VIDEO SCENE MODEL ────────────────────────────────────────────────────────
+
 class VideoScene(Base):
     """Individual scene within a video."""
-    
+
     __tablename__ = "video_scenes"
-    
+
+    __table_args__ = (
+        Index("ix_scenes_video_number", "video_id", "scene_number"),
+    )
+
     id = Column(String(36), primary_key=True, index=True)
-    video_id = Column(String(36), ForeignKey("videos.id"), nullable=False, index=True)
-    
-    # Scene Order
+    video_id = Column(
+        String(36),
+        ForeignKey("videos.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
     scene_number = Column(Integer, nullable=False)
-    
+
     # Content
     description = Column(Text, nullable=False)
     caption = Column(Text, nullable=True)
     narration = Column(Text, nullable=True)
-    
+
     # Generated Assets
     image_url = Column(String(500), nullable=True)
     image_prompt = Column(Text, nullable=True)
     video_clip_url = Column(String(500), nullable=True)
-    
+
     # Timing
-    duration = Column(Float, default=3.0)  # seconds
-    start_time = Column(Float, nullable=True)  # seconds from video start
-    end_time = Column(Float, nullable=True)  # seconds from video start
-    
-    # Status
-    status = Column(String(20), default="pending")  # pending, generating, completed, failed
-    
+    duration = Column(Float, default=3.0, nullable=False)
+    start_time = Column(Float, nullable=True)
+    end_time = Column(Float, nullable=True)
+
+    # FIX 6 - use proper Enum for scene status instead of raw String
+    status = Column(
+        SQLEnum(SceneStatus),
+        default=SceneStatus.PENDING,
+        nullable=False,
+    )
+    error_message = Column(Text, nullable=True)  # FIX 7 - store scene-level errors
+
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
     # Relationships
     video = relationship("Video", back_populates="scenes")
-    
+
     def __repr__(self) -> str:
-        return f"<VideoScene(video_id={self.video_id}, scene={self.scene_number})>"
-    
+        return f"<VideoScene(video_id={self.video_id}, scene={self.scene_number}, status={self.status})>"
+
     def to_dict(self) -> Dict[str, Any]:
-        """Convert scene to dictionary."""
         return {
             "id": self.id,
             "scene_number": self.scene_number,
@@ -226,55 +295,101 @@ class VideoScene(Base):
             "duration": self.duration,
             "start_time": self.start_time,
             "end_time": self.end_time,
-            "status": self.status,
+            "status": self.status.value,
+            "error_message": self.error_message,
         }
 
 
+# ─── VIDEO SCHEDULE MODEL ─────────────────────────────────────────────────────
+
 class VideoSchedule(Base):
     """Scheduled video generation tasks."""
-    
+
     __tablename__ = "video_schedules"
-    
+
     id = Column(String(36), primary_key=True, index=True)
-    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
-    
-    # Schedule Configuration
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
     name = Column(String(100), nullable=True)
-    is_active = Column(Boolean, default=True)
-    
+    is_active = Column(Boolean, default=True, nullable=False)
+
     # Frequency
-    frequency = Column(String(20), default="daily")  # daily, weekly, custom
-    days_of_week = Column(JSON, default=list)  # [0, 1, 2, 3, 4, 5, 6] for Mon-Sun
-    
-    # Times (cron-style or specific times)
-    schedule_times = Column(JSON, default=list)  # ["09:00", "15:00", "20:00"]
+    frequency = Column(String(20), default="daily", nullable=False)
+    # FIX 8 - lambda default for mutable JSON
+    days_of_week = Column(JSON, default=lambda: [0, 1, 2, 3, 4, 5, 6])
+    schedule_times = Column(JSON, default=lambda: [])
     cron_expression = Column(String(100), nullable=True)
-    
-    # Video Configuration (overrides user defaults)
-    video_config = Column(JSON, default=dict)  # Video generation settings
-    
-    # Limits
-    max_videos_per_day = Column(Integer, default=1)
-    videos_generated_today = Column(Integer, default=0)
+
+    # Video Configuration
+    video_config = Column(JSON, default=lambda: {})
+
+    # Limits & Tracking
+    max_videos_per_day = Column(Integer, default=1, nullable=False)
+    videos_generated_today = Column(Integer, default=0, nullable=False)
     last_generated_at = Column(DateTime, nullable=True)
-    
+    last_reset_at = Column(DateTime, nullable=True)  # FIX 9 - track when daily count was reset
+
     # Statistics
-    total_videos_generated = Column(Integer, default=0)
-    total_videos_failed = Column(Integer, default=0)
-    
+    total_videos_generated = Column(Integer, default=0, nullable=False)
+    total_videos_failed = Column(Integer, default=0, nullable=False)
+
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
     # Relationships
     user = relationship("User", back_populates="schedules")
-    videos = relationship("Video", back_populates="schedule")
-    
+    videos = relationship(
+        "Video",
+        back_populates="schedule",
+        foreign_keys="Video.schedule_id",
+    )
+
     def __repr__(self) -> str:
-        return f"<VideoSchedule(user_id={self.user_id}, active={self.is_active})>"
-    
+        return f"<VideoSchedule(id={self.id}, user_id={self.user_id}, active={self.is_active})>"
+
+    def can_generate_today(self) -> bool:
+        """Check if schedule can generate more videos today."""
+        if not self.is_active:
+            return False
+
+        # FIX 10 - auto-reset daily count if it's a new day
+        if self.last_reset_at:
+            now = datetime.utcnow()
+            last_reset_day = self.last_reset_at.date()
+            if now.date() > last_reset_day:
+                self.reset_daily_count()
+
+        if self.videos_generated_today >= self.max_videos_per_day:
+            return False
+
+        if self.days_of_week:
+            today = datetime.utcnow().weekday()
+            if today not in self.days_of_week:
+                return False
+
+        return True
+
+    def reset_daily_count(self) -> None:
+        """Reset daily video count and record reset time."""
+        self.videos_generated_today = 0
+        self.last_reset_at = datetime.utcnow()
+
+    def record_generated(self, success: bool = True) -> None:
+        """Record a video generation attempt."""
+        self.videos_generated_today += 1
+        self.last_generated_at = datetime.utcnow()
+        if success:
+            self.total_videos_generated += 1
+        else:
+            self.total_videos_failed += 1
+
     def to_dict(self) -> Dict[str, Any]:
-        """Convert schedule to dictionary."""
         return {
             "id": self.id,
             "name": self.name,
@@ -285,25 +400,8 @@ class VideoSchedule(Base):
             "max_videos_per_day": self.max_videos_per_day,
             "videos_generated_today": self.videos_generated_today,
             "total_videos_generated": self.total_videos_generated,
+            "total_videos_failed": self.total_videos_failed,
+            "last_generated_at": self.last_generated_at.isoformat() if self.last_generated_at else None,
             "video_config": self.video_config,
             "created_at": self.created_at.isoformat() if self.created_at else None,
-        }
-    
-    def can_generate_today(self) -> bool:
-        """Check if schedule can generate more videos today."""
-        if not self.is_active:
-            return False
-        if self.videos_generated_today >= self.max_videos_per_day:
-            return False
-        
-        # Check if today is in allowed days
-        if self.days_of_week:
-            today = datetime.utcnow().weekday()
-            if today not in self.days_of_week:
-                return False
-        
-        return True
-    
-    def reset_daily_count(self) -> None:
-        """Reset daily video count."""
-        self.videos_generated_today = 0
+}
