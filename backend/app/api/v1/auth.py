@@ -72,6 +72,11 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+# FIX 1 - refresh_token was a query param, Flutter sends JSON body
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
 def get_or_create_user(
     db: Session,
     email: str,
@@ -118,56 +123,63 @@ async def register(
     db: Session = Depends(get_db),
 ):
     """Register new user with email and password."""
-    # Check if user exists
-    existing_user = db.query(User).filter(User.email == request.email).first()
-    if existing_user:
-        raise ValidationException("Email already registered")
-    
-    # Validate password
-    if len(request.password) < 8:
-        raise ValidationException("Password must be at least 8 characters")
-    
-    # Create user with hashed password
-    import uuid
-    user = User(
-        id=str(uuid.uuid4()),
-        email=request.email,
-        display_name=request.display_name,
-        subscription_tier=SubscriptionTier.FREE,
-        credits=0,
-    )
-    user.password_hash = get_password_hash(request.password)
-    
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    
-    # Create default settings
-    settings = UserSettings(
-        id=str(uuid.uuid4()),
-        user_id=user.id,
-    )
-    db.add(settings)
-    db.commit()
-    
-    logger.info("User registered", user_id=user.id, email=request.email)
-    
-    # Generate tokens
-    access_token = create_access_token({"sub": user.id, "email": user.email})
-    refresh_token = create_refresh_token({"sub": user.id})
-    
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_in=60 * 24 * 7,  # 7 days
-        user={
-            "id": user.id,
-            "email": user.email,
-            "display_name": user.display_name,
-            "subscription_tier": user.subscription_tier.value,
-            "credits": user.credits,
-        },
-    )
+    try:
+        # Check if user exists
+        existing_user = db.query(User).filter(User.email == request.email).first()
+        if existing_user:
+            raise ValidationException("Email already registered")
+        
+        # Validate password
+        if len(request.password) < 8:
+            raise ValidationException("Password must be at least 8 characters")
+        
+        # Create user with hashed password
+        import uuid
+        user = User(
+            id=str(uuid.uuid4()),
+            email=request.email,
+            display_name=request.display_name,
+            subscription_tier=SubscriptionTier.FREE,
+            credits=0,
+        )
+        user.password_hash = get_password_hash(request.password)
+        
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        
+        # Create default settings
+        settings = UserSettings(
+            id=str(uuid.uuid4()),
+            user_id=user.id,
+        )
+        db.add(settings)
+        db.commit()
+        
+        logger.info("User registered", user_id=user.id, email=request.email)
+        
+        # Generate tokens
+        access_token = create_access_token({"sub": user.id, "email": user.email})
+        refresh_token = create_refresh_token({"sub": user.id})
+        
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=60 * 24 * 7,  # 7 days
+            user={
+                "id": user.id,
+                "email": user.email,
+                "display_name": user.display_name,
+                "subscription_tier": user.subscription_tier.value,
+                "credits": user.credits,
+            },
+        )
+    # FIX 2 - catch DB/unexpected errors and return readable message
+    except (ValidationException, AuthenticationException):
+        raise
+    except Exception as e:
+        logger.error("Registration error", error=str(e))
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -176,41 +188,47 @@ async def login(
     db: Session = Depends(get_db),
 ):
     """Login with email and password."""
-    # Find user
-    user = db.query(User).filter(User.email == request.email).first()
-    if not user:
-        raise AuthenticationException("Invalid email or password")
-    
-    # Verify password
-    if not hasattr(user, 'password_hash') or not user.password_hash:
-        raise AuthenticationException("Please set a password first")
-    
-    if not verify_password(request.password, user.password_hash):
-        raise AuthenticationException("Invalid email or password")
-    
-    # Update last login
-    from datetime import datetime
-    user.last_login_at = datetime.utcnow()
-    db.commit()
-    
-    logger.info("User logged in", user_id=user.id, email=request.email)
-    
-    # Generate tokens
-    access_token = create_access_token({"sub": user.id, "email": user.email})
-    refresh_token = create_refresh_token({"sub": user.id})
-    
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_in=60 * 24 * 7,  # 7 days
-        user={
-            "id": user.id,
-            "email": user.email,
-            "display_name": user.display_name,
-            "subscription_tier": user.subscription_tier.value,
-            "credits": user.credits,
-        },
-    )
+    try:
+        # Find user
+        user = db.query(User).filter(User.email == request.email).first()
+        if not user:
+            raise AuthenticationException("Invalid email or password")
+        
+        # Verify password
+        if not hasattr(user, 'password_hash') or not user.password_hash:
+            raise AuthenticationException("Please set a password first")
+        
+        if not verify_password(request.password, user.password_hash):
+            raise AuthenticationException("Invalid email or password")
+        
+        # Update last login
+        from datetime import datetime
+        user.last_login_at = datetime.utcnow()
+        db.commit()
+        
+        logger.info("User logged in", user_id=user.id, email=request.email)
+        
+        # Generate tokens
+        access_token = create_access_token({"sub": user.id, "email": user.email})
+        refresh_token = create_refresh_token({"sub": user.id})
+        
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=60 * 24 * 7,  # 7 days
+            user={
+                "id": user.id,
+                "email": user.email,
+                "display_name": user.display_name,
+                "subscription_tier": user.subscription_tier.value,
+                "credits": user.credits,
+            },
+        )
+    except (ValidationException, AuthenticationException):
+        raise
+    except Exception as e:
+        logger.error("Login error", error=str(e))
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
 @router.post("/social-login", response_model=TokenResponse)
@@ -259,10 +277,13 @@ async def social_login(
 
 
 @router.post("/refresh")
-async def refresh_token(refresh_token: str):
+async def refresh_token(
+    # FIX 1 - was: refresh_token: str (query param), now reads JSON body
+    request: RefreshTokenRequest,
+):
     """Refresh access token."""
     try:
-        payload = verify_token(refresh_token, token_type="refresh")
+        payload = verify_token(request.refresh_token, token_type="refresh")
         user_id = payload.get("sub")
         
         # Generate new access token
@@ -383,29 +404,26 @@ async def reset_password(
     db: Session = Depends(get_db),
 ):
     """Reset password using token from email."""
-    try:
-        payload = verify_token(request.token)
-        
-        if payload.get("type") != "password_reset":
-            raise AuthenticationException("Invalid token type")
-        
-        user_id = payload.get("sub")
-        user = db.query(User).filter(User.id == user_id).first()
-        
-        if not user:
-            raise AuthenticationException("User not found")
-        
-        # Validate new password
-        if len(request.new_password) < 8:
-            raise ValidationException("Password must be at least 8 characters")
-        
-        # Update password
-        user.password_hash = get_password_hash(request.new_password)
-        db.commit()
-        
-        logger.info("Password reset successful", user_id=user.id)
-        
-        return {"message": "Password reset successful"}
-        
-    except Exception as e:
-        raise AuthenticationException("Invalid or expired token")
+    # FIX 3 - broad except was swallowing AuthenticationException itself
+    payload = verify_token(request.token)
+    
+    if payload.get("type") != "password_reset":
+        raise AuthenticationException("Invalid token type")
+    
+    user_id = payload.get("sub")
+    user = db.query(User).filter(User.id == user_id).first()
+    
+    if not user:
+        raise AuthenticationException("User not found")
+    
+    # Validate new password
+    if len(request.new_password) < 8:
+        raise ValidationException("Password must be at least 8 characters")
+    
+    # Update password
+    user.password_hash = get_password_hash(request.new_password)
+    db.commit()
+    
+    logger.info("Password reset successful", user_id=user.id)
+    
+    return {"message": "Password reset successful"}
