@@ -18,33 +18,35 @@ from app.core.security import verify_token
 from app.db.base import get_db
 from app.models.user import User
 from app.models.video import Video, VideoScene, VideoSchedule, VideoStatus, VideoType, VideoStyle
+
 from app.tasks.video_generation import generate_video_task
 
 logger = get_logger(__name__)
 router = APIRouter()
 
 
-# Dependency to get current user
+# ─── AUTH DEPENDENCY ─────────────────────────────────────────────────────────
+
 def get_current_user(
     authorization: str = Header(None),
     db: Session = Depends(get_db),
 ) -> User:
-    """Get current authenticated user."""
     if not authorization or not authorization.startswith("Bearer "):
-        raise AuthenticationException("Authorization header required")
-    
+        raise AuthenticationException("You must be logged in to perform this action.")
+
     token = authorization.split(" ")[1]
     payload = verify_token(token)
     user_id = payload.get("sub")
-    
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise AuthenticationException("User not found")
-    
+        raise AuthenticationException("Account not found. Please log in again.")
+
     return user
 
 
-# Request/Response Models
+# ─── REQUEST / RESPONSE MODELS ───────────────────────────────────────────────
+
 class CreateVideoRequest(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
@@ -116,40 +118,132 @@ class ScheduleResponse(BaseModel):
     created_at: str
 
 
-# Helper functions
-def check_daily_limit(user: User, db: Session) -> bool:
-    """Check if user has exceeded daily video limit."""
+# ─── HELPERS ─────────────────────────────────────────────────────────────────
+
+# Subscription tier limits
+TIER_LIMITS = {
+    "free": {
+        "max_duration": 30,
+        "daily_limit": 2,
+        "can_use_narration": False,
+        "can_use_character_consistency": False,
+        "label": "Free",
+    },
+    "basic": {
+        "max_duration": 60,
+        "daily_limit": 10,
+        "can_use_narration": True,
+        "can_use_character_consistency": False,
+        "label": "Basic",
+    },
+    "pro": {
+        "max_duration": 300,
+        "daily_limit": 50,
+        "can_use_narration": True,
+        "can_use_character_consistency": True,
+        "label": "Pro",
+    },
+}
+
+def get_tier_limits(user: User) -> dict:
+    """Get limits for a user's subscription tier."""
+    tier = user.subscription_tier
+    # Handle both string and enum values
+    tier_str = tier.value if hasattr(tier, "value") else str(tier)
+    return TIER_LIMITS.get(tier_str.lower(), TIER_LIMITS["free"])
+
+
+def check_daily_limit(user: User, db: Session) -> int:
+    """Return number of videos created today by user."""
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    videos_today = db.query(Video).filter(
+    return db.query(Video).filter(
         Video.user_id == user.id,
         Video.created_at >= today_start
     ).count()
-    
-    return videos_today < user.daily_video_limit
 
 
 def validate_video_config(request: CreateVideoRequest, user: User) -> None:
-    """Validate video configuration."""
-    # Check duration limit
-    if request.duration > user.max_video_length:
+    """Validate video configuration with friendly error messages."""
+    limits = get_tier_limits(user)
+    tier_label = limits["label"]
+
+    # ── Duration check ──────────────────────────────────────────────────────
+    max_duration = limits["max_duration"]
+    if request.duration > max_duration:
+        if tier_label == "Free":
+            raise ValidationException(
+                f"⏱️ Free plan videos are limited to {max_duration} seconds. "
+                f"Upgrade to Basic (60s) or Pro (5 mins) to create longer videos!"
+            )
+        elif tier_label == "Basic":
+            raise ValidationException(
+                f"⏱️ Basic plan videos are limited to {max_duration} seconds. "
+                f"Upgrade to Pro to create videos up to 5 minutes long!"
+            )
+        else:
+            raise ValidationException(
+                f"⏱️ Maximum video duration is {max_duration} seconds."
+            )
+
+    # ── Daily limit check ───────────────────────────────────────────────────
+    videos_today = check_daily_limit(user, db=None)  # will be called separately
+    daily_limit = limits["daily_limit"]
+    if videos_today >= daily_limit:
+        if tier_label == "Free":
+            raise RateLimitException(
+                f"📅 You've used all {daily_limit} free videos for today. "
+                f"Come back tomorrow or upgrade to Pro for up to 50 videos per day!"
+            )
+        else:
+            raise RateLimitException(
+                f"📅 You've reached your daily limit of {daily_limit} videos. "
+                f"Your limit resets at midnight UTC."
+            )
+
+    # ── Narration check ─────────────────────────────────────────────────────
+    if request.video_type == "narration" and not limits["can_use_narration"]:
         raise ValidationException(
-            f"Duration exceeds maximum allowed ({user.max_video_length}s)"
+            "🎙️ Narration videos are not available on the Free plan. "
+            "Upgrade to Basic or Pro to add AI voiceover to your videos!"
         )
-    
-    # Validate aspect ratio
+
+    # ── Character consistency check ─────────────────────────────────────────
+    if request.character_consistency_enabled and not limits["can_use_character_consistency"]:
+        raise ValidationException(
+            "🎭 Character Consistency is a Pro-only feature. "
+            "Upgrade to Pro to keep consistent characters across all your scenes!"
+        )
+
+    # ── Aspect ratio check ──────────────────────────────────────────────────
     valid_ratios = ["16:9", "9:16", "1:1"]
     if request.aspect_ratio not in valid_ratios:
-        raise ValidationException(f"Invalid aspect ratio. Must be one of: {valid_ratios}")
-    
-    # Validate style
+        raise ValidationException(
+            f"📐 Invalid aspect ratio '{request.aspect_ratio}'. "
+            f"Please choose one of: {', '.join(valid_ratios)}."
+        )
+
+    # ── Style check ─────────────────────────────────────────────────────────
     valid_styles = ["cartoon", "cinematic", "realistic", "funny", "dramatic", "minimal"]
     if request.style not in valid_styles:
-        raise ValidationException(f"Invalid style. Must be one of: {valid_styles}")
-    
-    # Validate video type
-    if request.video_type not in ["silent", "narration"]:
-        raise ValidationException("Video type must be 'silent' or 'narration'")
+        raise ValidationException(
+            f"🎨 Invalid style '{request.style}'. "
+            f"Please choose one of: {', '.join(valid_styles)}."
+        )
 
+    # ── Video type check ────────────────────────────────────────────────────
+    if request.video_type not in ["silent", "narration"]:
+        raise ValidationException(
+            "🎬 Invalid video type. Please select either 'Silent' or 'Narration'."
+        )
+
+    # ── Niche check ─────────────────────────────────────────────────────────
+    if not request.niche or len(request.niche.strip()) == 0:
+        raise ValidationException(
+            "📌 Please select a content niche before creating your video."
+        )
+
+
+# ─── VIDEO ROUTES ─────────────────────────────────────────────────────────────
 
 @router.post("/generate", response_model=VideoResponse)
 async def create_video(
@@ -159,18 +253,74 @@ async def create_video(
     db: Session = Depends(get_db),
 ):
     """Create and start video generation."""
-    # Check daily limit
-    if not check_daily_limit(current_user, db):
-        raise RateLimitException("Daily video limit exceeded")
-    
-    # Validate configuration
-    validate_video_config(request, current_user)
-    
-    # Check narration permission
-    if request.video_type == "narration" and current_user.subscription_tier.value == "free":
-        raise ValidationException("Narration requires Pro subscription")
-    
-    # Create video record
+    limits = get_tier_limits(current_user)
+    tier_label = limits["label"]
+
+    # ── Daily limit ──────────────────────────────────────────────────────────
+    videos_today = check_daily_limit(current_user, db)
+    daily_limit = limits["daily_limit"]
+    if videos_today >= daily_limit:
+        if tier_label == "Free":
+            raise RateLimitException(
+                f"📅 You've used all {daily_limit} free videos for today. "
+                f"Come back tomorrow or upgrade to Pro for up to 50 videos/day!"
+            )
+        else:
+            raise RateLimitException(
+                f"📅 Daily limit of {daily_limit} videos reached. Resets at midnight UTC."
+            )
+
+    # ── Duration ─────────────────────────────────────────────────────────────
+    max_duration = limits["max_duration"]
+    if request.duration > max_duration:
+        if tier_label == "Free":
+            raise ValidationException(
+                f"⏱️ Free plan is limited to {max_duration} seconds per video. "
+                f"Upgrade to Basic (60s) or Pro (5 mins) for longer videos!"
+            )
+        elif tier_label == "Basic":
+            raise ValidationException(
+                f"⏱️ Basic plan is limited to {max_duration} seconds. "
+                f"Upgrade to Pro for videos up to 5 minutes!"
+            )
+        else:
+            raise ValidationException(f"⏱️ Maximum duration is {max_duration} seconds.")
+
+    # ── Narration ─────────────────────────────────────────────────────────────
+    if request.video_type == "narration" and not limits["can_use_narration"]:
+        raise ValidationException(
+            "🎙️ Narration is not available on the Free plan. "
+            "Upgrade to Basic or Pro to add AI voiceover to your videos!"
+        )
+
+    # ── Character consistency ─────────────────────────────────────────────────
+    if request.character_consistency_enabled and not limits["can_use_character_consistency"]:
+        raise ValidationException(
+            "🎭 Character Consistency is a Pro-only feature. "
+            "Upgrade to Pro to unlock it!"
+        )
+
+    # ── Aspect ratio ──────────────────────────────────────────────────────────
+    valid_ratios = ["16:9", "9:16", "1:1"]
+    if request.aspect_ratio not in valid_ratios:
+        raise ValidationException(
+            f"📐 Invalid aspect ratio. Choose one of: {', '.join(valid_ratios)}."
+        )
+
+    # ── Style ─────────────────────────────────────────────────────────────────
+    valid_styles = ["cartoon", "cinematic", "realistic", "funny", "dramatic", "minimal"]
+    if request.style not in valid_styles:
+        raise ValidationException(
+            f"🎨 Invalid style. Choose one of: {', '.join(valid_styles)}."
+        )
+
+    # ── Video type ────────────────────────────────────────────────────────────
+    if request.video_type not in ["silent", "narration"]:
+        raise ValidationException(
+            "🎬 Invalid video type. Please select 'Silent' or 'Narration'."
+        )
+
+    # ── Create video record ───────────────────────────────────────────────────
     import uuid
     video = Video(
         id=str(uuid.uuid4()),
@@ -195,21 +345,21 @@ async def create_video(
         status=VideoStatus.PENDING,
         progress=0,
     )
-    
+
     db.add(video)
     db.commit()
     db.refresh(video)
-    
+
     logger.info(
         "Video generation started",
         video_id=video.id,
         user_id=current_user.id,
         niche=request.niche,
+        tier=tier_label,
     )
-    
-    # Queue video generation task
+
     background_tasks.add_task(generate_video_task, video.id)
-    
+
     return VideoResponse(
         id=video.id,
         title=video.title,
@@ -238,15 +388,18 @@ async def list_videos(
 ):
     """List user's videos."""
     query = db.query(Video).filter(Video.user_id == current_user.id)
-    
+
     if status:
-        query = query.filter(Video.status == status)
-    
+        try:
+            query = query.filter(Video.status == VideoStatus(status))
+        except ValueError:
+            raise ValidationException(f"Invalid status filter: '{status}'.")
+
     total = query.count()
     videos = query.order_by(Video.created_at.desc()).offset(
         (page - 1) * limit
     ).limit(limit).all()
-    
+
     return {
         "videos": [VideoResponse(
             id=v.id,
@@ -281,10 +434,10 @@ async def get_video(
         Video.id == video_id,
         Video.user_id == current_user.id
     ).first()
-    
+
     if not video:
-        raise NotFoundException("Video not found")
-    
+        raise NotFoundException("Video not found. It may have been deleted.")
+
     return VideoResponse(
         id=video.id,
         title=video.title,
@@ -314,14 +467,14 @@ async def get_video_scenes(
         Video.id == video_id,
         Video.user_id == current_user.id
     ).first()
-    
+
     if not video:
-        raise NotFoundException("Video not found")
-    
+        raise NotFoundException("Video not found.")
+
     scenes = db.query(VideoScene).filter(
         VideoScene.video_id == video_id
     ).order_by(VideoScene.scene_number).all()
-    
+
     return {
         "scenes": [SceneResponse(
             id=s.id,
@@ -348,17 +501,15 @@ async def delete_video(
         Video.id == video_id,
         Video.user_id == current_user.id
     ).first()
-    
+
     if not video:
-        raise NotFoundException("Video not found")
-    
-    # Delete from database (cascade will handle scenes)
+        raise NotFoundException("Video not found or already deleted.")
+
     db.delete(video)
     db.commit()
-    
+
     logger.info("Video deleted", video_id=video_id, user_id=current_user.id)
-    
-    return {"message": "Video deleted successfully"}
+    return {"message": "✅ Video deleted successfully."}
 
 
 @router.post("/{video_id}/regenerate")
@@ -373,28 +524,37 @@ async def regenerate_video(
         Video.id == video_id,
         Video.user_id == current_user.id
     ).first()
-    
+
     if not video:
-        raise NotFoundException("Video not found")
-    
+        raise NotFoundException("Video not found.")
+
     if video.status not in [VideoStatus.FAILED, VideoStatus.CANCELLED]:
-        raise ValidationException("Only failed or cancelled videos can be regenerated")
-    
-    # Reset status
+        raise ValidationException(
+            "⚠️ Only failed or cancelled videos can be regenerated."
+        )
+
+    # Check daily limit before regenerating
+    limits = get_tier_limits(current_user)
+    videos_today = check_daily_limit(current_user, db)
+    if videos_today >= limits["daily_limit"]:
+        raise RateLimitException(
+            f"📅 Daily limit reached. You can regenerate this video tomorrow, "
+            f"or upgrade your plan for a higher daily limit!"
+        )
+
     video.status = VideoStatus.PENDING
     video.progress = 0
     video.error_message = None
     db.commit()
-    
-    # Queue regeneration
+
     background_tasks.add_task(generate_video_task, video.id)
-    
+
     logger.info("Video regeneration started", video_id=video_id, user_id=current_user.id)
-    
-    return {"message": "Video regeneration started"}
+    return {"message": "🔄 Video regeneration started!"}
 
 
-# Schedule routes
+# ─── SCHEDULE ROUTES ──────────────────────────────────────────────────────────
+
 @router.post("/schedules", response_model=ScheduleResponse)
 async def create_schedule(
     request: ScheduleRequest,
@@ -402,8 +562,16 @@ async def create_schedule(
     db: Session = Depends(get_db),
 ):
     """Create video generation schedule."""
+    limits = get_tier_limits(current_user)
+
+    # Only Basic and Pro can use scheduling
+    if limits["label"] == "Free":
+        raise ValidationException(
+            "📅 Video scheduling is not available on the Free plan. "
+            "Upgrade to Basic or Pro to automate your content creation!"
+        )
+
     import uuid
-    
     schedule = VideoSchedule(
         id=str(uuid.uuid4()),
         user_id=current_user.id,
@@ -414,13 +582,13 @@ async def create_schedule(
         max_videos_per_day=request.max_videos_per_day,
         video_config=request.video_config or {},
     )
-    
+
     db.add(schedule)
     db.commit()
     db.refresh(schedule)
-    
+
     logger.info("Schedule created", schedule_id=schedule.id, user_id=current_user.id)
-    
+
     return ScheduleResponse(
         id=schedule.id,
         name=schedule.name,
@@ -444,7 +612,7 @@ async def list_schedules(
     schedules = db.query(VideoSchedule).filter(
         VideoSchedule.user_id == current_user.id
     ).order_by(VideoSchedule.created_at.desc()).all()
-    
+
     return {
         "schedules": [ScheduleResponse(
             id=s.id,
@@ -473,24 +641,22 @@ async def update_schedule(
         VideoSchedule.id == schedule_id,
         VideoSchedule.user_id == current_user.id
     ).first()
-    
+
     if not schedule:
-        raise NotFoundException("Schedule not found")
-    
-    # Update fields
+        raise NotFoundException("Schedule not found.")
+
     schedule.name = request.name
     schedule.frequency = request.frequency
     schedule.days_of_week = request.days_of_week or schedule.days_of_week
     schedule.schedule_times = request.schedule_times
     schedule.max_videos_per_day = request.max_videos_per_day
     schedule.video_config = request.video_config or schedule.video_config
-    
+
     db.commit()
     db.refresh(schedule)
-    
+
     logger.info("Schedule updated", schedule_id=schedule_id, user_id=current_user.id)
-    
-    return {"message": "Schedule updated successfully"}
+    return {"message": "✅ Schedule updated successfully."}
 
 
 @router.delete("/schedules/{schedule_id}")
@@ -504,13 +670,12 @@ async def delete_schedule(
         VideoSchedule.id == schedule_id,
         VideoSchedule.user_id == current_user.id
     ).first()
-    
+
     if not schedule:
-        raise NotFoundException("Schedule not found")
-    
+        raise NotFoundException("Schedule not found.")
+
     db.delete(schedule)
     db.commit()
-    
+
     logger.info("Schedule deleted", schedule_id=schedule_id, user_id=current_user.id)
-    
-    return {"message": "Schedule deleted successfully"}
+    return {"message": "✅ Schedule deleted successfully."}
