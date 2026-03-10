@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../../config/theme.dart';
 import '../../providers/auth_bloc.dart';
 import '../dashboard/dashboard_screen.dart';
 import '../settings/settings_screen.dart';
-import '../video/create_video_screen.dart';
+import '../video/smart_create_screen.dart';
 import '../video/videos_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -17,69 +19,123 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
 
-  // FIX - changed to late so setState can be used inside the callback
   late final List<Widget> _screens = [
-    DashboardScreen(onNavigate: (index) {
-      setState(() => _currentIndex = index);
-    }),
+    DashboardScreen(
+      onNavigate: (index) => setState(() => _currentIndex = index),
+    ),
     const VideosScreen(),
-    const CreateVideoScreen(),
+    const SmartCreateScreen(),
     const SettingsScreen(),
-  ];
-
-  final List<String> _titles = [
-    'Dashboard',
-    'My Videos',
-    'Create',
-    'Settings',
-  ];
-
-  final List<IconData> _icons = [
-    Icons.dashboard_outlined,
-    Icons.video_library_outlined,
-    Icons.add_circle_outline,
-    Icons.settings_outlined,
-  ];
-
-  final List<IconData> _selectedIcons = [
-    Icons.dashboard,
-    Icons.video_library,
-    Icons.add_circle,
-    Icons.settings,
   ];
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _screens,
+    return BlocListener<AuthBloc, AuthState>(
+      listener: (context, state) {
+        // If user gets logged out from anywhere, reset tab to dashboard
+        if (state is AuthInitial || state is Unauthenticated) {
+          setState(() => _currentIndex = 0);
+        }
+      },
+      child: Scaffold(
+        body: IndexedStack(
+          index: _currentIndex,
+          children: _screens,
+        ),
+        bottomNavigationBar: _buildBottomNav(),
       ),
-      bottomNavigationBar: NavigationBar(
+    );
+  }
+
+  Widget _buildBottomNav() {
+    return Container(
+      decoration: BoxDecoration(
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 20,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: NavigationBar(
         selectedIndex: _currentIndex,
-        onDestinationSelected: (index) {
-          setState(() => _currentIndex = index);
-        },
+        onDestinationSelected: (index) =>
+            setState(() => _currentIndex = index),
+        height: 65.h,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         destinations: [
+          // Dashboard
           NavigationDestination(
-            icon: Icon(_icons[0]),
-            selectedIcon: Icon(_selectedIcons[0]),
-            label: _titles[0],
+            icon: const Icon(Icons.dashboard_outlined),
+            selectedIcon: Icon(
+              Icons.dashboard,
+              color: AppTheme.primaryColor,
+            ),
+            label: 'Dashboard',
           ),
+
+          // My Videos
           NavigationDestination(
-            icon: Icon(_icons[1]),
-            selectedIcon: Icon(_selectedIcons[1]),
-            label: _titles[1],
+            icon: const Icon(Icons.video_library_outlined),
+            selectedIcon: Icon(
+              Icons.video_library,
+              color: AppTheme.primaryColor,
+            ),
+            label: 'My Videos',
           ),
+
+          // Smart Create — highlighted center button
           NavigationDestination(
-            icon: Icon(_icons[2]),
-            selectedIcon: Icon(_selectedIcons[2]),
-            label: _titles[2],
+            icon: Container(
+              padding: EdgeInsets.all(10.w),
+              decoration: BoxDecoration(
+                gradient: AppTheme.primaryGradient,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: AppTheme.primaryColor.withOpacity(0.4),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.auto_awesome,
+                size: 22.w,
+                color: Colors.white,
+              ),
+            ),
+            selectedIcon: Container(
+              padding: EdgeInsets.all(10.w),
+              decoration: BoxDecoration(
+                gradient: AppTheme.primaryGradient,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: AppTheme.primaryColor.withOpacity(0.6),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.auto_awesome,
+                size: 22.w,
+                color: Colors.white,
+              ),
+            ),
+            label: 'Create',
           ),
+
+          // Settings
           NavigationDestination(
-            icon: Icon(_icons[3]),
-            selectedIcon: Icon(_selectedIcons[3]),
-            label: _titles[3],
+            icon: const Icon(Icons.settings_outlined),
+            selectedIcon: Icon(
+              Icons.settings,
+              color: AppTheme.primaryColor,
+            ),
+            label: 'Settings',
           ),
         ],
       ),
