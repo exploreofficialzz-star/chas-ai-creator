@@ -404,7 +404,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         padding:
             EdgeInsets.symmetric(horizontal: 10.w, vertical: 5.h),
         decoration: BoxDecoration(
-          color: Colors.white20,
+          color: Colors.white.withOpacity(0.2),
           borderRadius: BorderRadius.circular(20.r),
         ),
         child: Text(label,
@@ -619,7 +619,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                   Text(
                     '50 videos/day · 5 min max · 4K quality',
                     style: TextStyle(
-                        fontSize: 11.sp, color: Colors.white80),
+                        fontSize: 11.sp, color: Colors.white.withOpacity(0.8)),
                   ),
                 ],
               ),
