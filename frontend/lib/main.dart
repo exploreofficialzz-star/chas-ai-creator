@@ -80,8 +80,10 @@ class ChAsAICreatorApp extends StatelessWidget {
         return MultiBlocProvider(
           providers: [
             BlocProvider(
-              create: (context) => AuthBloc(authService: AuthService())
-                ..add(AppStarted()),
+              // FIX 1 - Removed ..add(AppStarted()) from here
+              // app.dart already fires AppStarted() in initState
+              // firing it twice caused double auth check and loading flicker
+              create: (context) => AuthBloc(authService: AuthService()),
             ),
           ],
           child: MaterialApp(
