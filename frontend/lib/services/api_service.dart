@@ -1,9 +1,9 @@
 /*
  * chAs AI Creator - API Service
- * Created by: chAs
- * Global Version - Uses Custom JWT Auth
+ * Enhanced & Debugged — Global Version
  */
 
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -19,7 +19,6 @@ class ApiService {
   static const String baseUrl =
       'https://chas-ai-creator-2.onrender.com/api/v1';
 
-  // Singleton so interceptors are never duplicated
   static final ApiService _instance = ApiService._internal();
   factory ApiService() => _instance;
 
@@ -35,87 +34,157 @@ class ApiService {
       },
     ));
 
+    // ── Interceptor: inject token + auto-refresh ────────────────────────
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
         final token = await _authService.getAccessToken();
-        if (token != null) {
+        if (token != null && token.isNotEmpty) {
           options.headers['Authorization'] = 'Bearer $token';
         }
+        _log('→ ${options.method} ${options.path}');
         return handler.next(options);
       },
+
+      onResponse: (response, handler) {
+        _log('← ${response.statusCode} ${response.requestOptions.path}');
+        return handler.next(response);
+      },
+
       onError: (error, handler) async {
+        _log('✗ ${error.response?.statusCode} '
+            '${error.requestOptions.path}: ${error.message}');
+
+        // FIX 1 — auto-retry on 401 with refreshed token
         if (error.response?.statusCode == 401) {
           try {
             final newToken = await _authService.refreshAccessToken();
             if (newToken != null) {
               error.requestOptions.headers['Authorization'] =
                   'Bearer $newToken';
-              final response = await _dio.fetch(error.requestOptions);
+              final response =
+                  await _dio.fetch(error.requestOptions);
               return handler.resolve(response);
-            } else {
-              await _authService.signOut();
             }
-          } catch (_) {
-            await _authService.signOut();
-          }
+          } catch (_) {}
+          await _authService.signOut();
         }
+
+        // FIX 2 — auto-retry ONCE on 502/503 (Render cold start)
+        if ((error.response?.statusCode == 502 ||
+                error.response?.statusCode == 503) &&
+            !(error.requestOptions.extra['retried'] == true)) {
+          try {
+            _log('⏳ Cold start detected — retrying in 3s...');
+            await Future.delayed(const Duration(seconds: 3));
+            final opts = error.requestOptions;
+            opts.extra['retried'] = true;
+            final response = await _dio.fetch(opts);
+            return handler.resolve(response);
+          } catch (_) {}
+        }
+
         return handler.next(error);
       },
     ));
   }
 
-  // ─── USER ──────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // USER
+  // ─────────────────────────────────────────────────────────────────────────
 
+  // FIX 3 — was hitting '/auth/me', correct endpoint is '/users/me'
   Future<User> getCurrentUser() async {
-    final response = await _dio.get('/auth/me');
-    return User.fromJson(response.data);
+    final response = await _dio.get('/users/me');
+    return User.fromJson(_asMap(response.data));
   }
 
+  // FIX 4 — was PUT '/users/profile', consistent with auth_service PATCH '/users/me'
   Future<User> updateProfile({
     String? displayName,
     String? bio,
     String? avatarUrl,
   }) async {
-    final response = await _dio.put('/users/profile', data: {
-      if (displayName != null) 'display_name': displayName,
-      if (bio != null) 'bio': bio,
+    final response = await _dio.patch('/users/me', data: {
+      if (displayName != null) 'display_name': displayName.trim(),
+      if (bio != null) 'bio': bio.trim(),
       if (avatarUrl != null) 'avatar_url': avatarUrl,
     });
-    return User.fromJson(response.data);
+    return User.fromJson(_asMap(response.data));
   }
 
   Future<UserSettings?> getUserSettings() async {
     try {
       final response = await _dio.get('/users/settings');
-      final data = response.data;
-      if (data == null || data['settings'] == null) return null;
-      return UserSettings.fromJson(data['settings']);
+      final data = _asMap(response.data);
+      // FIX 5 — handle both {'settings': {...}} and flat response
+      final settingsJson =
+          data['settings'] as Map<String, dynamic>? ?? data;
+      if (settingsJson.isEmpty) return null;
+      return UserSettings.fromJson(settingsJson);
     } on DioException catch (e) {
+      // FIX 6 — 404 means no settings saved yet → return null (use defaults)
       if (e.response?.statusCode == 404) return null;
       rethrow;
     }
   }
 
   Future<UserSettings> updateUserSettings(UserSettings settings) async {
-    final response =
-        await _dio.put('/users/settings', data: settings.toJson());
-    return UserSettings.fromJson(response.data['settings']);
+    final response = await _dio.put(
+      '/users/settings',
+      data: settings.toJson(),
+    );
+    final data = _asMap(response.data);
+    // FIX 7 — handle both {'settings': {...}} and flat response
+    final settingsJson =
+        data['settings'] as Map<String, dynamic>? ?? data;
+    return UserSettings.fromJson(settingsJson);
   }
 
   Future<Map<String, dynamic>> getUsageStats() async {
-    final response = await _dio.get('/users/usage');
-    final data = response.data as Map<String, dynamic>? ?? {};
-    return {
-      'total_videos_generated': 0,
-      'remaining_daily_videos': 0,
-      'videos_today': 0,
-      'videos_this_month': 0,
-      'credits': 0,
-      ...data,
-    };
+    try {
+      final response = await _dio.get('/users/usage');
+      final data = _asMap(response.data);
+      // FIX 8 — normalize all possible key names from backend
+      return {
+        'total_videos_generated':
+            data['total_videos_generated'] ??
+            data['total_videos'] ??
+            data['totalVideos'] ?? 0,
+        'remaining_daily_videos':
+            data['remaining_daily_videos'] ??
+            data['remaining'] ??
+            data['videos_remaining'] ?? 0,
+        'videos_today':
+            data['videos_today'] ??
+            data['today_count'] ??
+            data['videosToday'] ?? 0,
+        'videos_this_month':
+            data['videos_this_month'] ??
+            data['month_count'] ??
+            data['videosThisMonth'] ?? 0,
+        'credits':
+            data['credits'] ?? 0,
+        'daily_limit':
+            data['daily_limit'] ??
+            data['limit'] ?? 2,
+        ...data,
+      };
+    } catch (_) {
+      // FIX 9 — return safe defaults on failure so dashboard never crashes
+      return {
+        'total_videos_generated': 0,
+        'remaining_daily_videos': 0,
+        'videos_today': 0,
+        'videos_this_month': 0,
+        'credits': 0,
+        'daily_limit': 2,
+      };
+    }
   }
 
-  // ─── VIDEOS ────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // VIDEOS
+  // ─────────────────────────────────────────────────────────────────────────
 
   Future<Map<String, dynamic>> createVideo({
     required String niche,
@@ -135,36 +204,41 @@ class ApiService {
     String backgroundMusicStyle = 'upbeat',
     String? userInstructions,
     String? scenePriorityNotes,
-    // NEW — audio & platform fields from SmartCreateScreen
     String audioMode = 'silent',
     String voiceStyle = 'professional',
     List<String> targetPlatforms = const ['tiktok'],
   }) async {
-    final response = await _dio.post('/videos/generate', data: {
-      'niche': niche,
-      if (title != null) 'title': title,
-      if (description != null) 'description': description,
-      'video_type': videoType,
-      'duration': duration,
-      'aspect_ratio': aspectRatio,
-      'style': style,
-      'character_consistency_enabled': characterConsistencyEnabled,
-      if (characterDescription != null)
-        'character_description': characterDescription,
-      'captions_enabled': captionsEnabled,
-      'caption_style': captionStyle,
-      'caption_color': captionColor,
-      'caption_emoji_enabled': captionEmojiEnabled,
-      'background_music_enabled': backgroundMusicEnabled,
-      'background_music_style': backgroundMusicStyle,
-      if (userInstructions != null) 'user_instructions': userInstructions,
-      if (scenePriorityNotes != null)
-        'scene_priority_notes': scenePriorityNotes,
-      'audio_mode': audioMode,
-      'voice_style': voiceStyle,
-      'target_platforms': targetPlatforms,
-    });
-    return response.data;
+    final response = await _dio.post(
+      '/videos/generate',
+      data: {
+        'niche': niche,
+        if (title != null) 'title': title,
+        if (description != null) 'description': description,
+        'video_type': videoType,
+        'duration': duration,
+        'aspect_ratio': aspectRatio,
+        'style': style,
+        'character_consistency_enabled': characterConsistencyEnabled,
+        if (characterDescription != null)
+          'character_description': characterDescription,
+        'captions_enabled': captionsEnabled,
+        'caption_style': captionStyle,
+        'caption_color': captionColor,
+        'caption_emoji_enabled': captionEmojiEnabled,
+        'background_music_enabled': backgroundMusicEnabled,
+        'background_music_style': backgroundMusicStyle,
+        if (userInstructions != null)
+          'user_instructions': userInstructions,
+        if (scenePriorityNotes != null)
+          'scene_priority_notes': scenePriorityNotes,
+        'audio_mode': audioMode,
+        'voice_style': voiceStyle,
+        'target_platforms': targetPlatforms,
+      },
+      // FIX 10 — video generation can take a long time
+      options: Options(receiveTimeout: const Duration(seconds: 300)),
+    );
+    return _asMap(response.data);
   }
 
   Future<Map<String, dynamic>> getVideos({
@@ -172,40 +246,75 @@ class ApiService {
     int page = 1,
     int limit = 20,
   }) async {
-    final response = await _dio.get('/videos/list', queryParameters: {
-      if (status != null) 'status': status,
-      'page': page,
-      'limit': limit,
-    });
-    final data = response.data as Map<String, dynamic>? ?? {};
+    // FIX 11 — try both endpoint patterns (some backends use /videos/)
+    Response response;
+    try {
+      response = await _dio.get('/videos/', queryParameters: {
+        if (status != null) 'status': status,
+        'page': page,
+        'limit': limit,
+        'per_page': limit,
+      });
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404 ||
+          e.response?.statusCode == 405) {
+        // Fallback to /videos/list
+        response = await _dio.get('/videos/list', queryParameters: {
+          if (status != null) 'status': status,
+          'page': page,
+          'limit': limit,
+        });
+      } else {
+        rethrow;
+      }
+    }
+
+    final data = _asMap(response.data);
+
+    // FIX 12 — normalize all possible video list response shapes
+    final videos = (data['videos'] ??
+            data['data'] ??
+            data['items'] ??
+            data['results'] ??
+            []) as List;
+
     return {
-      'videos': [],
-      'total': 0,
-      'page': page,
-      'pages': 1,
+      'videos': videos,
+      'total': data['total'] ??
+          data['count'] ??
+          data['total_count'] ??
+          videos.length,
+      'page': data['page'] ?? page,
+      'pages': data['pages'] ??
+          data['total_pages'] ??
+          data['pageCount'] ?? 1,
       ...data,
     };
   }
 
   Future<Map<String, dynamic>> getVideo(String videoId) async {
     final response = await _dio.get('/videos/$videoId');
-    return response.data;
+    return _asMap(response.data);
   }
 
   Future<Map<String, dynamic>> getVideoScenes(String videoId) async {
     final response = await _dio.get('/videos/$videoId/scenes');
-    return response.data;
+    return _asMap(response.data);
   }
 
   Future<void> deleteVideo(String videoId) async {
     await _dio.delete('/videos/$videoId');
   }
 
-  Future<void> regenerateVideo(String videoId) async {
-    await _dio.post('/videos/$videoId/regenerate');
+  Future<Map<String, dynamic>> regenerateVideo(String videoId) async {
+    final response =
+        await _dio.post('/videos/$videoId/regenerate');
+    return _asMap(response.data);
   }
 
-  // ─── SCHEDULES ─────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // SCHEDULES
+  // ─────────────────────────────────────────────────────────────────────────
 
   Future<Map<String, dynamic>> createSchedule({
     String? name,
@@ -223,12 +332,12 @@ class ApiService {
       'max_videos_per_day': maxVideosPerDay,
       if (videoConfig != null) 'video_config': videoConfig,
     });
-    return response.data;
+    return _asMap(response.data);
   }
 
   Future<Map<String, dynamic>> getSchedules() async {
     final response = await _dio.get('/videos/schedules/list');
-    return response.data;
+    return _asMap(response.data);
   }
 
   Future<void> updateSchedule(
@@ -245,7 +354,8 @@ class ApiService {
       if (frequency != null) 'frequency': frequency,
       if (daysOfWeek != null) 'days_of_week': daysOfWeek,
       if (scheduleTimes != null) 'schedule_times': scheduleTimes,
-      if (maxVideosPerDay != null) 'max_videos_per_day': maxVideosPerDay,
+      if (maxVideosPerDay != null)
+        'max_videos_per_day': maxVideosPerDay,
       if (videoConfig != null) 'video_config': videoConfig,
     });
   }
@@ -254,7 +364,9 @@ class ApiService {
     await _dio.delete('/videos/schedules/$scheduleId');
   }
 
-  // ─── AI SERVICES ───────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // AI SERVICES
+  // ─────────────────────────────────────────────────────────────────────────
 
   Future<Map<String, dynamic>> generateScript({
     required String niche,
@@ -263,14 +375,20 @@ class ApiService {
     String? userInstructions,
     String style = 'cinematic',
   }) async {
-    final response = await _dio.post('/ai/generate-script', data: {
-      'niche': niche,
-      'video_type': videoType,
-      'duration': duration,
-      if (userInstructions != null) 'user_instructions': userInstructions,
-      'style': style,
-    });
-    return response.data;
+    final response = await _dio.post(
+      '/ai/generate-script',
+      data: {
+        'niche': niche,
+        'video_type': videoType,
+        'duration': duration,
+        'style': style,
+        if (userInstructions != null)
+          'user_instructions': userInstructions,
+      },
+      options:
+          Options(receiveTimeout: const Duration(seconds: 120)),
+    );
+    return _asMap(response.data);
   }
 
   Future<Map<String, dynamic>> generateImage({
@@ -279,13 +397,19 @@ class ApiService {
     String aspectRatio = '9:16',
     String? negativePrompt,
   }) async {
-    final response = await _dio.post('/ai/generate-image', data: {
-      'prompt': prompt,
-      'style': style,
-      'aspect_ratio': aspectRatio,
-      if (negativePrompt != null) 'negative_prompt': negativePrompt,
-    });
-    return response.data;
+    final response = await _dio.post(
+      '/ai/generate-image',
+      data: {
+        'prompt': prompt,
+        'style': style,
+        'aspect_ratio': aspectRatio,
+        if (negativePrompt != null)
+          'negative_prompt': negativePrompt,
+      },
+      options:
+          Options(receiveTimeout: const Duration(seconds: 120)),
+    );
+    return _asMap(response.data);
   }
 
   Future<Map<String, dynamic>> previewVideo({
@@ -295,18 +419,22 @@ class ApiService {
     String style = 'cinematic',
     String? userInstructions,
   }) async {
-    final response = await _dio.post('/ai/preview-video', data: {
-      'niche': niche,
-      'video_type': videoType,
-      'duration': duration,
-      'style': style,
-      if (userInstructions != null) 'user_instructions': userInstructions,
-    });
-    return response.data;
+    final response = await _dio.post(
+      '/ai/preview-video',
+      data: {
+        'niche': niche,
+        'video_type': videoType,
+        'duration': duration,
+        'style': style,
+        if (userInstructions != null)
+          'user_instructions': userInstructions,
+      },
+      options:
+          Options(receiveTimeout: const Duration(seconds: 180)),
+    );
+    return _asMap(response.data);
   }
 
-  /// Full smart plan — used by SmartCreateScreen.
-  /// Sends all fields including audio mode, platforms, character consistency.
   Future<Map<String, dynamic>> smartGeneratePlan({
     required String idea,
     String aspectRatio = '9:16',
@@ -335,115 +463,109 @@ class ApiService {
         'character_consistency': characterConsistency,
         'uploaded_image_count': uploadedImageCount,
       },
-      // Smart plan needs extra time — HuggingFace can be slow
-      options: Options(receiveTimeout: const Duration(seconds: 240)),
+      options:
+          Options(receiveTimeout: const Duration(seconds: 240)),
     );
-    return response.data;
+    return _asMap(response.data);
   }
 
-  /// Upload reference images for character consistency.
-  /// Returns list of uploaded URLs.
-  Future<List<String>> uploadReferenceImages(List<File> images) async {
+  Future<List<String>> uploadReferenceImages(
+      List<File> images) async {
     final urls = <String>[];
     for (final image in images) {
       try {
         final url = await uploadFile(image, 'references');
         urls.add(url);
       } catch (e) {
-        // skip failed images, don't block the whole plan
+        _log('⚠️ Skipped image upload: $e');
       }
     }
     return urls;
-  }
-
-  Future<Map<String, dynamic>> getNiches() async {
-    final response = await _dio.get('/ai/niches');
-    return response.data;
-  }
-
-  Future<Map<String, dynamic>> getStyles() async {
-    final response = await _dio.get('/ai/styles');
-    return response.data;
-  }
-
-  Future<Map<String, dynamic>> getCaptionStyles() async {
-    final response = await _dio.get('/ai/caption-styles');
-    return response.data;
-  }
-
-  Future<Map<String, dynamic>> getMusicStyles() async {
-    final response = await _dio.get('/ai/music-styles');
-    return response.data;
   }
 
   Future<Map<String, dynamic>> checkAiHealth() async {
     try {
       final response = await _dio.get(
         '/ai/health',
-        options: Options(receiveTimeout: const Duration(seconds: 10)),
+        options:
+            Options(receiveTimeout: const Duration(seconds: 10)),
       );
-      return response.data;
+      return _asMap(response.data);
     } catch (_) {
       return {'status': 'unavailable'};
     }
   }
 
-  // ─── PAYMENTS ──────────────────────────────────────────────────────────────
+  Future<Map<String, dynamic>> getNiches() async {
+    final r = await _dio.get('/ai/niches');
+    return _asMap(r.data);
+  }
+
+  Future<Map<String, dynamic>> getStyles() async {
+    final r = await _dio.get('/ai/styles');
+    return _asMap(r.data);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PAYMENTS
+  // ─────────────────────────────────────────────────────────────────────────
 
   Future<Map<String, dynamic>> getSubscriptionPlans() async {
-    final response = await _dio.get('/payments/plans');
-    return response.data;
+    final r = await _dio.get('/payments/plans');
+    return _asMap(r.data);
   }
 
   Future<Map<String, dynamic>> getCreditPackages() async {
-    final response = await _dio.get('/payments/credit-packages');
-    return response.data;
+    final r = await _dio.get('/payments/credit-packages');
+    return _asMap(r.data);
   }
 
   Future<Map<String, dynamic>> initializePayment({
     required String packageId,
     String? callbackUrl,
   }) async {
-    final response = await _dio.post('/payments/initialize', data: {
+    final r = await _dio.post('/payments/initialize', data: {
       'package_id': packageId,
       if (callbackUrl != null) 'callback_url': callbackUrl,
     });
-    return response.data;
+    return _asMap(r.data);
   }
 
-  Future<Map<String, dynamic>> verifyPayment(String reference) async {
-    final response = await _dio.post('/payments/verify', data: {
-      'reference': reference,
-    });
-    return response.data;
+  Future<Map<String, dynamic>> verifyPayment(
+      String reference) async {
+    final r = await _dio.post('/payments/verify',
+        data: {'reference': reference});
+    return _asMap(r.data);
   }
 
   Future<Map<String, dynamic>> createSubscription({
     required String planId,
     String billingCycle = 'monthly',
   }) async {
-    final response = await _dio.post('/payments/subscribe', data: {
+    final r = await _dio.post('/payments/subscribe', data: {
       'plan_id': planId,
       'billing_cycle': billingCycle,
     });
-    return response.data;
+    return _asMap(r.data);
   }
 
   Future<Map<String, dynamic>> getPaymentHistory() async {
-    final response = await _dio.get('/payments/history');
-    return response.data;
+    final r = await _dio.get('/payments/history');
+    return _asMap(r.data);
   }
 
   Future<Map<String, dynamic>> getCurrentSubscription() async {
-    final response = await _dio.get('/payments/current');
-    return response.data;
+    final r = await _dio.get('/payments/current');
+    return _asMap(r.data);
   }
 
   Future<void> cancelSubscription() async {
     await _dio.post('/payments/cancel-subscription');
   }
 
-  // ─── FILE UPLOAD ───────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // FILE UPLOAD
+  // ─────────────────────────────────────────────────────────────────────────
 
   Future<String> uploadFile(File file, String path) async {
     final fileName = file.path.split('/').last;
@@ -471,20 +593,36 @@ class ApiService {
       options: Options(
         receiveTimeout: const Duration(seconds: 180),
         sendTimeout: const Duration(seconds: 180),
+        contentType: 'multipart/form-data',
       ),
     );
-    return response.data['url'];
+
+    final data = _asMap(response.data);
+    // FIX 13 — handle 'url', 'file_url', 'secure_url' (Cloudinary)
+    final url = data['url'] ??
+        data['file_url'] ??
+        data['secure_url'] ??
+        data['public_url'];
+
+    if (url == null || url.toString().isEmpty) {
+      throw Exception('Upload succeeded but no URL returned');
+    }
+    return url.toString();
   }
 
-  // ─── ERROR HANDLING ────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // ERROR HANDLING
+  // ─────────────────────────────────────────────────────────────────────────
 
   String handleError(dynamic error) {
     if (error is DioException) {
+      // Timeout / network errors
       switch (error.type) {
         case DioExceptionType.connectionTimeout:
         case DioExceptionType.sendTimeout:
-        case DioExceptionType.receiveTimeout:
           return '⏱️ Connection timed out. Please check your internet.';
+        case DioExceptionType.receiveTimeout:
+          return '⏱️ Server took too long. Please try again.';
         case DioExceptionType.connectionError:
           return '📡 No internet connection. Please check your network.';
         default:
@@ -493,35 +631,51 @@ class ApiService {
 
       final response = error.response;
       if (response != null) {
+        // FIX 14 — parse FastAPI validation error list format
         final data = response.data;
         if (data is Map) {
-          final msg =
-              data['detail'] ?? data['error'] ?? data['message'];
+          final detail = data['detail'];
+          if (detail is List && detail.isNotEmpty) {
+            final first = detail.first;
+            if (first is Map) {
+              return first['msg']?.toString() ??
+                  'Validation error';
+            }
+          }
+          final msg = data['detail'] ??
+              data['error'] ??
+              data['message'];
           if (msg != null && msg.toString().isNotEmpty) {
             return msg.toString();
           }
         }
+
         return switch (response.statusCode) {
-          400 => '❌ Invalid request. Please check your inputs.',
-          401 => '🔒 Session expired. Please log in again.',
-          403 => '🚫 You don\'t have permission to do this.',
-          404 => '🔍 Not found. It may have been deleted.',
-          422 => '❌ Invalid data sent. Please try again.',
-          429 => '⏳ Too many requests. Please wait a moment.',
-          500 => '🔧 Server error. Our team has been notified.',
-          502 => '🔧 Server is starting up. Please try again in 30s.',
-          503 => '🔧 Service temporarily unavailable. Try again soon.',
-          _   => '❌ Something went wrong (${response.statusCode}).',
+          400  => '❌ Invalid request. Please check your inputs.',
+          401  => '🔒 Session expired. Please log in again.',
+          403  => '🚫 You don\'t have permission to do this.',
+          404  => '🔍 Not found. It may have been deleted.',
+          409  => '⚠️ This already exists.',
+          422  => '❌ Invalid data. Please check your inputs.',
+          429  => '⏳ Too many requests. Please wait a moment.',
+          500  => '🔧 Server error. Please try again.',
+          502  => '🔧 Server is starting up. Please retry in 30s.',
+          503  => '🔧 Service unavailable. Please try again soon.',
+          _    => '❌ Something went wrong (${response.statusCode}).',
         };
       }
-
       return '📡 Network error. Please check your connection.';
+    }
+
+    final msg = error?.toString() ?? '';
+    if (msg.contains('SocketException') ||
+        msg.contains('Connection refused')) {
+      return '📡 No internet connection.';
     }
 
     return '❌ Unexpected error. Please try again.';
   }
 
-  /// Returns true if the error is a network/timeout issue
   bool isNetworkError(dynamic error) {
     if (error is DioException) {
       return error.type == DioExceptionType.connectionError ||
@@ -529,10 +683,9 @@ class ApiService {
           error.type == DioExceptionType.receiveTimeout ||
           error.type == DioExceptionType.sendTimeout;
     }
-    return false;
+    return error is SocketException;
   }
 
-  /// Returns true if the error is auth-related
   bool isAuthError(dynamic error) {
     if (error is DioException) {
       return error.response?.statusCode == 401 ||
@@ -540,4 +693,20 @@ class ApiService {
     }
     return false;
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // HELPERS
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// FIX 15 — safely cast any response.data to Map<String, dynamic>
+  Map<String, dynamic> _asMap(dynamic data) {
+    if (data is Map<String, dynamic>) return data;
+    if (data is Map) {
+      return Map<String, dynamic>.from(data);
+    }
+    return {};
+  }
+
+  void _log(String msg) =>
+      developer.log(msg, name: 'ApiService');
 }
