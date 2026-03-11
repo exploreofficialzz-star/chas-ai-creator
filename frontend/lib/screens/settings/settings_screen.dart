@@ -27,11 +27,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isSaving  = false;
   Timer? _saveDebounce;
 
-  // FIX 1 — _user is NEVER stored locally in this screen.
-  // We always read it from AuthBloc so the entire app stays in sync.
+  // Always read user from AuthBloc — never store locally
   User? get _user {
-    final state = context.read<AuthBloc>().state;
-    return state is Authenticated ? state.user : null;
+    final s = context.read<AuthBloc>().state;
+    return s is Authenticated ? s.user : null;
   }
 
   @override
@@ -46,7 +45,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
-  // FIX 2 — only load settings here; user comes from AuthBloc
   Future<void> _loadSettings() async {
     try {
       final settings = await _apiService.getUserSettings();
@@ -56,7 +54,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _isLoading = false;
         });
       }
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
         setState(() {
           _settings = _defaultSettings();
@@ -107,18 +105,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   void _showToast(String msg, {bool error = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor:
-            error ? Colors.red.shade700 : Colors.green.shade700,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10.r)),
-        margin: EdgeInsets.all(12.w),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(msg),
+          backgroundColor:
+              error ? Colors.red.shade700 : Colors.green.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10.r)),
+          margin: EdgeInsets.all(12.w),
+          duration: const Duration(seconds: 3),
+        ),
+      );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -127,9 +127,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // FIX 3 — BlocBuilder wraps the whole screen so every widget that
-    // reads _user automatically rebuilds when AuthBloc emits UpdateUser.
-    // This is what makes the profile card + dashboard stay in sync.
     return BlocBuilder<AuthBloc, AuthState>(
       builder: (context, authState) {
         return Scaffold(
@@ -183,8 +180,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           icon: Icons.person_outline,
                           title: 'Edit Profile',
                           subtitle: _user?.displayName ??
-                              _user?.email ??
-                              '',
+                              _user?.email ?? '',
                           onTap: _showEditProfileDialog,
                         ),
                         _buildDivider(),
@@ -210,303 +206,227 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ]),
 
                       SizedBox(height: 24.h),
-
-                      _buildSectionHeader(
-                          '🎬 Default Video Settings'),
+                      _buildSectionHeader('🎬 Default Video Settings'),
                       _buildCard([
                         _buildTile(
                           icon: Icons.aspect_ratio,
                           title: 'Aspect Ratio',
-                          subtitle: _settings?.defaultAspectRatio ??
-                              '9:16',
+                          subtitle: _settings?.defaultAspectRatio ?? '9:16',
                           onTap: () => _showOptionsSheet(
                             title: 'Default Aspect Ratio',
-                            options: const [
-                              '9:16', '16:9', '1:1'
-                            ],
-                            selected:
-                                _settings?.defaultAspectRatio ??
-                                    '9:16',
+                            options: const ['9:16', '16:9', '1:1'],
+                            selected: _settings?.defaultAspectRatio ?? '9:16',
                             onSelected: (v) => _updateSettings(
-                                _settings!.copyWith(
-                                    defaultAspectRatio: v)),
+                                _settings!.copyWith(defaultAspectRatio: v)),
                           ),
                         ),
                         _buildDivider(),
                         _buildTile(
                           icon: Icons.timer_outlined,
                           title: 'Default Duration',
-                          subtitle:
-                              '${_settings?.defaultVideoLength ?? 30} seconds',
+                          subtitle: '${_settings?.defaultVideoLength ?? 30} seconds',
                           onTap: _showDurationSelector,
                         ),
                         _buildDivider(),
                         _buildTile(
                           icon: Icons.style_outlined,
                           title: 'Visual Style',
-                          subtitle: _capitalize(
-                              _settings?.defaultStyle ??
-                                  'cinematic'),
+                          subtitle: _capitalize(_settings?.defaultStyle ?? 'cinematic'),
                           onTap: () => _showOptionsSheet(
                             title: 'Default Visual Style',
                             options: const [
                               'cinematic', 'realistic', 'cartoon',
                               'dramatic', 'minimal', 'funny',
                             ],
-                            selected:
-                                _settings?.defaultStyle ??
-                                    'cinematic',
+                            selected: _settings?.defaultStyle ?? 'cinematic',
                             onSelected: (v) => _updateSettings(
-                                _settings!
-                                    .copyWith(defaultStyle: v)),
+                                _settings!.copyWith(defaultStyle: v)),
                           ),
                         ),
                         _buildDivider(),
                         _buildTile(
                           icon: Icons.category_outlined,
                           title: 'Default Niche',
-                          subtitle: _capitalize(
-                              _settings?.defaultNiche ?? 'general'),
+                          subtitle: _capitalize(_settings?.defaultNiche ?? 'general'),
                           onTap: () => _showOptionsSheet(
                             title: 'Default Niche',
                             options: const [
-                              'general', 'fitness', 'cooking',
-                              'travel', 'tech', 'fashion',
-                              'finance', 'education', 'motivation',
-                              'gaming', 'music', 'business',
+                              'general', 'fitness', 'cooking', 'travel',
+                              'tech', 'fashion', 'finance', 'education',
+                              'motivation', 'gaming', 'music', 'business',
                               'science', 'nature', 'comedy',
                             ],
-                            selected:
-                                _settings?.defaultNiche ??
-                                    'general',
+                            selected: _settings?.defaultNiche ?? 'general',
                             onSelected: (v) => _updateSettings(
-                                _settings!
-                                    .copyWith(defaultNiche: v)),
+                                _settings!.copyWith(defaultNiche: v)),
                           ),
                         ),
                       ]),
 
                       SizedBox(height: 24.h),
-
                       _buildSectionHeader('🎙️ Audio & Voice'),
                       _buildCard([
                         _buildTile(
                           icon: Icons.record_voice_over_outlined,
                           title: 'Default Audio Mode',
-                          subtitle: _capitalize(
-                              _settings?.defaultAudioMode ??
-                                  'narration'),
+                          subtitle: _capitalize(_settings?.defaultAudioMode ?? 'narration'),
                           onTap: () => _showOptionsSheet(
                             title: 'Default Audio Mode',
-                            options: const [
-                              'silent', 'narration', 'soundSync'
-                            ],
+                            options: const ['silent', 'narration', 'soundSync'],
                             labels: const [
                               'Silent (Music only)',
                               'AI Narration (Voiceover)',
                               'Sound Sync (Realistic sounds)',
                             ],
-                            selected:
-                                _settings?.defaultAudioMode ??
-                                    'narration',
+                            selected: _settings?.defaultAudioMode ?? 'narration',
                             onSelected: (v) => _updateSettings(
-                                _settings!.copyWith(
-                                    defaultAudioMode: v)),
+                                _settings!.copyWith(defaultAudioMode: v)),
                           ),
                         ),
                         _buildDivider(),
                         _buildTile(
                           icon: Icons.mic_outlined,
                           title: 'Voice Style',
-                          subtitle: _capitalize(
-                              _settings?.defaultVoiceStyle ??
-                                  'professional'),
+                          subtitle: _capitalize(_settings?.defaultVoiceStyle ?? 'professional'),
                           onTap: () => _showOptionsSheet(
                             title: 'Voice Style',
                             options: const [
-                              'professional', 'friendly',
-                              'dramatic', 'energetic', 'calm',
-                              'authoritative',
+                              'professional', 'friendly', 'dramatic',
+                              'energetic', 'calm', 'authoritative',
                             ],
-                            selected:
-                                _settings?.defaultVoiceStyle ??
-                                    'professional',
+                            selected: _settings?.defaultVoiceStyle ?? 'professional',
                             onSelected: (v) => _updateSettings(
-                                _settings!.copyWith(
-                                    defaultVoiceStyle: v)),
+                                _settings!.copyWith(defaultVoiceStyle: v)),
                           ),
                         ),
                         _buildDivider(),
                         _buildTile(
                           icon: Icons.music_note_outlined,
                           title: 'Music Style',
-                          subtitle: _capitalize(
-                              _settings?.backgroundMusicStyle ??
-                                  'upbeat'),
+                          subtitle: _capitalize(_settings?.backgroundMusicStyle ?? 'upbeat'),
                           onTap: () => _showOptionsSheet(
                             title: 'Background Music Style',
                             options: const [
                               'upbeat', 'calm', 'dramatic',
-                              'inspirational', 'epic', 'lofi',
-                              'none',
+                              'inspirational', 'epic', 'lofi', 'none',
                             ],
-                            selected:
-                                _settings?.backgroundMusicStyle ??
-                                    'upbeat',
+                            selected: _settings?.backgroundMusicStyle ?? 'upbeat',
                             onSelected: (v) => _updateSettings(
-                                _settings!.copyWith(
-                                    backgroundMusicStyle: v)),
+                                _settings!.copyWith(backgroundMusicStyle: v)),
                           ),
                         ),
                         _buildDivider(),
                         _buildSwitch(
                           icon: Icons.music_note,
                           title: 'Background Music',
-                          subtitle:
-                              'Add music to all videos by default',
-                          value: _settings
-                                  ?.backgroundMusicEnabled ??
-                              true,
+                          subtitle: 'Add music to all videos by default',
+                          value: _settings?.backgroundMusicEnabled ?? true,
                           onChanged: (v) => _updateSettings(
-                              _settings!.copyWith(
-                                  backgroundMusicEnabled: v)),
+                              _settings!.copyWith(backgroundMusicEnabled: v)),
                         ),
                       ]),
 
                       SizedBox(height: 24.h),
-
                       _buildSectionHeader('💬 Captions'),
                       _buildCard([
                         _buildSwitch(
                           icon: Icons.closed_caption_outlined,
                           title: 'Enable Captions',
-                          subtitle:
-                              'Show captions on all videos by default',
+                          subtitle: 'Show captions on all videos by default',
                           value: _settings?.captionsEnabled ?? true,
                           onChanged: (v) => _updateSettings(
-                              _settings!
-                                  .copyWith(captionsEnabled: v)),
+                              _settings!.copyWith(captionsEnabled: v)),
                         ),
                         _buildDivider(),
                         _buildTile(
                           icon: Icons.text_fields,
                           title: 'Caption Style',
-                          subtitle: _capitalize(
-                              _settings?.captionStyle ?? 'modern'),
+                          subtitle: _capitalize(_settings?.captionStyle ?? 'modern'),
                           onTap: () => _showOptionsSheet(
                             title: 'Caption Style',
-                            options: const [
-                              'modern', 'classic', 'bold',
-                              'minimal', 'fun'
-                            ],
-                            selected:
-                                _settings?.captionStyle ?? 'modern',
+                            options: const ['modern', 'classic', 'bold', 'minimal', 'fun'],
+                            selected: _settings?.captionStyle ?? 'modern',
                             onSelected: (v) => _updateSettings(
-                                _settings!
-                                    .copyWith(captionStyle: v)),
+                                _settings!.copyWith(captionStyle: v)),
                           ),
                         ),
                         _buildDivider(),
                         _buildSwitch(
                           icon: Icons.emoji_emotions_outlined,
                           title: 'Emoji in Captions',
-                          subtitle:
-                              'Include emojis in caption text',
-                          value:
-                              _settings?.captionEmojiEnabled ?? true,
+                          subtitle: 'Include emojis in caption text',
+                          value: _settings?.captionEmojiEnabled ?? true,
                           onChanged: (v) => _updateSettings(
-                              _settings!.copyWith(
-                                  captionEmojiEnabled: v)),
+                              _settings!.copyWith(captionEmojiEnabled: v)),
                         ),
                       ]),
 
                       SizedBox(height: 24.h),
-
                       _buildSectionHeader('📱 Default Platforms'),
                       _buildCard([_buildPlatformSelector()]),
 
                       SizedBox(height: 24.h),
-
                       _buildSectionHeader('🎭 AI Generation'),
                       _buildCard([
                         _buildSwitch(
                           icon: Icons.face_retouching_natural,
                           title: 'Character Consistency',
-                          subtitle:
-                              'Keep characters the same across all scenes',
-                          value: _settings
-                                  ?.characterConsistencyEnabled ??
-                              false,
+                          subtitle: 'Keep characters the same across all scenes',
+                          value: _settings?.characterConsistencyEnabled ?? false,
                           onChanged: (v) => _updateSettings(
-                              _settings!.copyWith(
-                                  characterConsistencyEnabled: v)),
+                              _settings!.copyWith(characterConsistencyEnabled: v)),
                         ),
                       ]),
 
                       SizedBox(height: 24.h),
-
                       _buildSectionHeader('🔔 Notifications'),
                       _buildCard([
                         _buildSwitch(
                           icon: Icons.notifications_outlined,
                           title: 'Push Notifications',
-                          value: _settings
-                                  ?.pushNotificationsEnabled ??
-                              true,
+                          value: _settings?.pushNotificationsEnabled ?? true,
                           onChanged: (v) => _updateSettings(
-                              _settings!.copyWith(
-                                  pushNotificationsEnabled: v)),
+                              _settings!.copyWith(pushNotificationsEnabled: v)),
                         ),
                         _buildDivider(),
                         _buildSwitch(
                           icon: Icons.email_outlined,
                           title: 'Email Notifications',
-                          value: _settings
-                                  ?.emailNotificationsEnabled ??
-                              true,
+                          value: _settings?.emailNotificationsEnabled ?? true,
                           onChanged: (v) => _updateSettings(
-                              _settings!.copyWith(
-                                  emailNotificationsEnabled: v)),
+                              _settings!.copyWith(emailNotificationsEnabled: v)),
                         ),
                         _buildDivider(),
                         _buildSwitch(
                           icon: Icons.check_circle_outline,
                           title: 'Video Complete Alert',
-                          subtitle:
-                              'Notify when a video finishes generating',
-                          value:
-                              _settings?.notifyOnVideoComplete ??
-                                  true,
+                          subtitle: 'Notify when a video finishes generating',
+                          value: _settings?.notifyOnVideoComplete ?? true,
                           onChanged: (v) => _updateSettings(
-                              _settings!.copyWith(
-                                  notifyOnVideoComplete: v)),
+                              _settings!.copyWith(notifyOnVideoComplete: v)),
                         ),
                       ]),
 
                       SizedBox(height: 24.h),
-
                       _buildSectionHeader('🔒 Privacy & Security'),
                       _buildCard([
                         _buildTile(
                           icon: Icons.download_outlined,
                           title: 'Export My Data',
-                          subtitle:
-                              'Download all your videos and data',
+                          subtitle: 'Download all your videos and data',
                           onTap: _showExportDataDialog,
                         ),
                         _buildDivider(),
                         _buildTile(
                           icon: Icons.delete_forever_outlined,
                           title: 'Delete Account',
-                          subtitle:
-                              'Permanently delete your account',
+                          subtitle: 'Permanently delete your account',
                           textColor: Colors.red,
                           onTap: _showDeleteAccountDialog,
                         ),
                       ]),
 
                       SizedBox(height: 24.h),
-
                       _buildSectionHeader('ℹ️ About'),
                       _buildCard([
                         _buildTile(
@@ -567,8 +487,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               decoration: BoxDecoration(
                 color: Colors.white24,
                 shape: BoxShape.circle,
-                border: Border.all(
-                    color: Colors.white38, width: 2),
+                border: Border.all(color: Colors.white38, width: 2),
               ),
               child: _user?.avatarUrl != null
                   ? ClipOval(
@@ -586,8 +505,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // FIX 3 — reads from AuthBloc via _user getter,
-                  // so this updates instantly app-wide after profile edit
                   Text(
                     _user?.displayName ?? 'Creator',
                     style: TextStyle(
@@ -600,8 +517,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Text(
                     _user?.email ?? '',
                     style: TextStyle(
-                        fontSize: 12.sp,
-                        color: Colors.white70),
+                        fontSize: 12.sp, color: Colors.white70),
                   ),
                   SizedBox(height: 8.h),
                   _buildTierBadge(light: true),
@@ -643,8 +559,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _       => '🆓 FREE',
     };
     return Container(
-      padding: EdgeInsets.symmetric(
-          horizontal: 10.w, vertical: 4.h),
+      padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 4.h),
       decoration: BoxDecoration(
         color: color.withOpacity(0.2),
         borderRadius: BorderRadius.circular(20.r),
@@ -683,7 +598,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'twitter':   ('🐦', 'X / Twitter'),
       'linkedin':  ('💼', 'LinkedIn'),
     };
-
     final selected = Set<String>.from(
         _settings?.defaultTargetPlatforms ?? ['tiktok']);
 
@@ -694,8 +608,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           Text(
             'Default platforms for hashtag & format optimization',
-            style:
-                TextStyle(fontSize: 12.sp, color: Colors.grey),
+            style: TextStyle(fontSize: 12.sp, color: Colors.grey),
           ),
           SizedBox(height: 12.h),
           Wrap(
@@ -707,15 +620,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onTap: () {
                   final updated = Set<String>.from(selected);
                   if (isSelected) {
-                    if (updated.length > 1) {
-                      updated.remove(e.key);
-                    }
+                    if (updated.length > 1) updated.remove(e.key);
                   } else {
                     updated.add(e.key);
                   }
                   _updateSettings(_settings!.copyWith(
-                      defaultTargetPlatforms:
-                          updated.toList()));
+                      defaultTargetPlatforms: updated.toList()));
                 },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
@@ -723,11 +633,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       horizontal: 12.w, vertical: 8.h),
                   decoration: BoxDecoration(
                     color: isSelected
-                        ? AppTheme.primaryColor
-                            .withOpacity(0.12)
+                        ? AppTheme.primaryColor.withOpacity(0.12)
                         : Colors.transparent,
-                    borderRadius:
-                        BorderRadius.circular(20.r),
+                    borderRadius: BorderRadius.circular(20.r),
                     border: Border.all(
                       color: isSelected
                           ? AppTheme.primaryColor
@@ -739,8 +647,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(e.value.$1,
-                          style:
-                              TextStyle(fontSize: 14.sp)),
+                          style: TextStyle(fontSize: 14.sp)),
                       SizedBox(width: 6.w),
                       Text(
                         e.value.$2,
@@ -789,8 +696,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(16.r),
-        border: Border.all(
-            color: Colors.grey.withOpacity(0.1)),
+        border: Border.all(color: Colors.grey.withOpacity(0.1)),
       ),
       child: Column(children: children),
     );
@@ -811,13 +717,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         width: 36.w,
         height: 36.w,
         decoration: BoxDecoration(
-          color: (textColor ?? AppTheme.primaryColor)
-              .withOpacity(0.1),
+          color: (textColor ?? AppTheme.primaryColor).withOpacity(0.1),
           borderRadius: BorderRadius.circular(10.r),
         ),
         child: Icon(icon,
-            size: 18.w,
-            color: textColor ?? AppTheme.primaryColor),
+            size: 18.w, color: textColor ?? AppTheme.primaryColor),
       ),
       title: Text(
         title,
@@ -829,12 +733,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       subtitle: subtitle != null
           ? Text(subtitle,
-              style: TextStyle(
-                  fontSize: 12.sp, color: Colors.grey))
+              style: TextStyle(fontSize: 12.sp, color: Colors.grey))
           : null,
       trailing: trailingWidget ??
-          Icon(Icons.chevron_right,
-              size: 18.w, color: Colors.grey),
+          Icon(Icons.chevron_right, size: 18.w, color: Colors.grey),
       onTap: onTap,
     );
   }
@@ -856,16 +758,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           color: AppTheme.primaryColor.withOpacity(0.1),
           borderRadius: BorderRadius.circular(10.r),
         ),
-        child: Icon(icon,
-            size: 18.w, color: AppTheme.primaryColor),
+        child: Icon(icon, size: 18.w, color: AppTheme.primaryColor),
       ),
       title: Text(title,
           style: TextStyle(
               fontSize: 14.sp, fontWeight: FontWeight.w500)),
       subtitle: subtitle != null
           ? Text(subtitle,
-              style: TextStyle(
-                  fontSize: 12.sp, color: Colors.grey))
+              style: TextStyle(fontSize: 12.sp, color: Colors.grey))
           : null,
       activeColor: Colors.white,
       activeTrackColor: AppTheme.primaryColor,
@@ -888,8 +788,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         decoration: BoxDecoration(
           color: Colors.red.withOpacity(0.08),
           borderRadius: BorderRadius.circular(16.r),
-          border:
-              Border.all(color: Colors.red.withOpacity(0.2)),
+          border: Border.all(color: Colors.red.withOpacity(0.2)),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -933,14 +832,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         builder: (_, scrollCtrl) => Container(
           decoration: BoxDecoration(
             color: Theme.of(context).scaffoldBackgroundColor,
-            borderRadius: BorderRadius.vertical(
-                top: Radius.circular(20.r)),
+            borderRadius:
+                BorderRadius.vertical(top: Radius.circular(20.r)),
           ),
           child: Column(
             children: [
               Padding(
-                padding:
-                    EdgeInsets.fromLTRB(20.w, 12.h, 20.w, 0),
+                padding: EdgeInsets.fromLTRB(20.w, 12.h, 20.w, 0),
                 child: Column(
                   children: [
                     Center(
@@ -949,8 +847,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         height: 4.h,
                         decoration: BoxDecoration(
                           color: Colors.grey.shade300,
-                          borderRadius:
-                              BorderRadius.circular(2.r),
+                          borderRadius: BorderRadius.circular(2.r),
                         ),
                       ),
                     ),
@@ -959,12 +856,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         style: Theme.of(context)
                             .textTheme
                             .titleMedium
-                            ?.copyWith(
-                                fontWeight:
-                                    FontWeight.bold)),
+                            ?.copyWith(fontWeight: FontWeight.bold)),
                     SizedBox(height: 8.h),
-                    Divider(
-                        color: Colors.grey.withOpacity(0.1)),
+                    Divider(color: Colors.grey.withOpacity(0.1)),
                   ],
                 ),
               ),
@@ -976,13 +870,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   itemCount: options.length,
                   itemBuilder: (_, i) {
                     final opt = options[i];
-                    final label =
-                        labels?[i] ?? _capitalize(opt);
+                    final label = labels?[i] ?? _capitalize(opt);
                     final isSelected = opt == selected;
                     return ListTile(
                       contentPadding:
-                          EdgeInsets.symmetric(
-                              horizontal: 8.w),
+                          EdgeInsets.symmetric(horizontal: 8.w),
                       title: Text(
                         label,
                         style: TextStyle(
@@ -1004,8 +896,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 shape: BoxShape.circle,
                               ),
                               child: Icon(Icons.check,
-                                  color: Colors.white,
-                                  size: 14.w),
+                                  color: Colors.white, size: 14.w),
                             )
                           : null,
                       onTap: () {
@@ -1031,19 +922,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
       options: durations.map((d) => '$d').toList(),
       labels: durations.map((d) => '$d seconds').toList(),
       selected: '${_settings?.defaultVideoLength ?? 30}',
-      onSelected: (v) => _updateSettings(_settings!
-          .copyWith(defaultVideoLength: int.parse(v))),
+      onSelected: (v) => _updateSettings(
+          _settings!.copyWith(defaultVideoLength: int.parse(v))),
     );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // EDIT PROFILE — THE MAIN FIX
+  // EDIT PROFILE
   // ─────────────────────────────────────────────────────────────────────────
 
   void _showEditProfileDialog() {
-    // FIX 4 — pre-fill from AuthBloc user, not local _user variable
-    final nameCtrl = TextEditingController(
-        text: _user?.displayName ?? '');
+    final nameCtrl =
+        TextEditingController(text: _user?.displayName ?? '');
     final bioCtrl =
         TextEditingController(text: _user?.bio ?? '');
     bool isSavingProfile = false;
@@ -1053,12 +943,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetCtx) => StatefulBuilder(
-        // FIX 5 — StatefulBuilder so the save button can show loading
-        // without rebuilding the whole screen
         builder: (ctx, setSheetState) => Padding(
           padding: EdgeInsets.only(
-              bottom:
-                  MediaQuery.of(context).viewInsets.bottom),
+              bottom: MediaQuery.of(context).viewInsets.bottom),
           child: Container(
             padding: EdgeInsets.all(24.w),
             decoration: BoxDecoration(
@@ -1081,23 +968,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const Spacer(),
                     IconButton(
                       icon: const Icon(Icons.close),
-                      onPressed: () =>
-                          Navigator.pop(sheetCtx),
+                      onPressed: () => Navigator.pop(sheetCtx),
                     ),
                   ],
                 ),
                 SizedBox(height: 20.h),
                 TextField(
                   controller: nameCtrl,
-                  textCapitalization:
-                      TextCapitalization.words,
+                  textCapitalization: TextCapitalization.words,
                   decoration: InputDecoration(
                     labelText: 'Display Name',
                     border: OutlineInputBorder(
-                        borderRadius:
-                            BorderRadius.circular(12.r)),
-                    prefixIcon:
-                        const Icon(Icons.person_outline),
+                        borderRadius: BorderRadius.circular(12.r)),
+                    prefixIcon: const Icon(Icons.person_outline),
                   ),
                 ),
                 SizedBox(height: 14.h),
@@ -1108,10 +991,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   decoration: InputDecoration(
                     labelText: 'Bio (optional)',
                     border: OutlineInputBorder(
-                        borderRadius:
-                            BorderRadius.circular(12.r)),
-                    prefixIcon:
-                        const Icon(Icons.info_outline),
+                        borderRadius: BorderRadius.circular(12.r)),
+                    prefixIcon: const Icon(Icons.info_outline),
                   ),
                 ),
                 SizedBox(height: 20.h),
@@ -1121,53 +1002,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     onPressed: isSavingProfile
                         ? null
                         : () async {
-                            final name =
-                                nameCtrl.text.trim();
+                            final name = nameCtrl.text.trim();
                             if (name.isEmpty) {
                               _showToast(
                                   '❌ Display name cannot be empty',
                                   error: true);
                               return;
                             }
-
-                            setSheetState(() =>
-                                isSavingProfile = true);
-
+                            setSheetState(
+                                () => isSavingProfile = true);
                             try {
-                              // FIX 6 — call AuthService.updateProfile
-                              // so the token is guaranteed to be attached
                               final updated =
-                                  await _authService
-                                      .updateProfile(
+                                  await _authService.updateProfile(
                                 displayName: name,
                                 bio: bioCtrl.text.trim(),
                               );
-
-                              // FIX 7 — THE KEY FIX: dispatch UpdateUser
-                              // to AuthBloc so EVERY screen in the app
-                              // (dashboard, home, settings profile card)
-                              // rebuilds with the new name/bio instantly.
                               if (mounted) {
-                                context.read<AuthBloc>().add(
-                                    UpdateUser(user: updated));
-                              }
-
-                              if (mounted) {
+                                context
+                                    .read<AuthBloc>()
+                                    .add(UpdateUser(user: updated));
                                 Navigator.pop(sheetCtx);
-                                _showToast(
-                                    '✅ Profile updated!');
+                                _showToast('✅ Profile updated!');
                               }
                             } catch (e) {
-                              setSheetState(() =>
-                                  isSavingProfile = false);
+                              setSheetState(
+                                  () => isSavingProfile = false);
                               _showToast(
                                   '❌ ${_apiService.handleError(e)}',
                                   error: true);
                             }
                           },
                     style: ElevatedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(
-                          vertical: 14.h),
+                      padding:
+                          EdgeInsets.symmetric(vertical: 14.h),
                       shape: RoundedRectangleBorder(
                           borderRadius:
                               BorderRadius.circular(12.r)),
@@ -1176,11 +1043,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ? SizedBox(
                             height: 18.h,
                             width: 18.h,
-                            child:
-                                const CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
+                            child: const CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white),
                           )
                         : const Text('Save Changes'),
                   ),
@@ -1195,24 +1060,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // CHANGE PASSWORD
+  // CHANGE PASSWORD — FULLY FIXED
   // ─────────────────────────────────────────────────────────────────────────
 
   void _showChangePasswordDialog() {
-    final currentCtrl  = TextEditingController();
-    final newCtrl      = TextEditingController();
-    final confirmCtrl  = TextEditingController();
-    bool isSaving = false;
+    final currentCtrl = TextEditingController();
+    final newCtrl     = TextEditingController();
+    final confirmCtrl = TextEditingController();
+
+    // FIX — each field has its own visibility state
+    bool showCurrent = false;
+    bool showNew     = false;
+    bool showConfirm = false;
+    bool isSaving    = false;
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      // FIX — useRootNavigator so keyboard doesn't collapse the sheet
+      useRootNavigator: true,
       builder: (sheetCtx) => StatefulBuilder(
         builder: (ctx, setSheetState) => Padding(
           padding: EdgeInsets.only(
-              bottom:
-                  MediaQuery.of(context).viewInsets.bottom),
+              bottom: MediaQuery.of(sheetCtx).viewInsets.bottom),
           child: Container(
             padding: EdgeInsets.all(24.w),
             decoration: BoxDecoration(
@@ -1224,6 +1095,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Header
                 Row(
                   children: [
                     Text('Change Password',
@@ -1235,30 +1107,79 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const Spacer(),
                     IconButton(
                       icon: const Icon(Icons.close),
-                      onPressed: () =>
-                          Navigator.pop(sheetCtx),
+                      onPressed: () => Navigator.pop(sheetCtx),
                     ),
                   ],
                 ),
                 SizedBox(height: 20.h),
-                _buildPasswordField(
-                    currentCtrl, 'Current Password'),
+
+                // Current password
+                _buildPasswordFieldWithToggle(
+                  ctrl: currentCtrl,
+                  label: 'Current Password',
+                  showPassword: showCurrent,
+                  onToggle: () => setSheetState(
+                      () => showCurrent = !showCurrent),
+                ),
                 SizedBox(height: 12.h),
-                _buildPasswordField(
-                    newCtrl, 'New Password'),
+
+                // New password
+                _buildPasswordFieldWithToggle(
+                  ctrl: newCtrl,
+                  label: 'New Password',
+                  showPassword: showNew,
+                  onToggle: () =>
+                      setSheetState(() => showNew = !showNew),
+                  // FIX — live strength hint under new password field
+                  helperText: newCtrl.text.isEmpty
+                      ? null
+                      : newCtrl.text.length < 8
+                          ? '⚠️ Too short (min 8 characters)'
+                          : '✅ Strong enough',
+                  helperColor: newCtrl.text.length < 8
+                      ? Colors.orange
+                      : Colors.green,
+                  onChanged: (_) => setSheetState(() {}),
+                ),
                 SizedBox(height: 12.h),
-                _buildPasswordField(
-                    confirmCtrl, 'Confirm New Password'),
-                SizedBox(height: 20.h),
+
+                // Confirm password
+                _buildPasswordFieldWithToggle(
+                  ctrl: confirmCtrl,
+                  label: 'Confirm New Password',
+                  showPassword: showConfirm,
+                  onToggle: () => setSheetState(
+                      () => showConfirm = !showConfirm),
+                  // FIX — live match indicator
+                  helperText: confirmCtrl.text.isEmpty
+                      ? null
+                      : confirmCtrl.text == newCtrl.text
+                          ? '✅ Passwords match'
+                          : '❌ Passwords do not match',
+                  helperColor: confirmCtrl.text == newCtrl.text
+                      ? Colors.green
+                      : Colors.red,
+                  onChanged: (_) => setSheetState(() {}),
+                ),
+
+                SizedBox(height: 24.h),
+
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
                     onPressed: isSaving
                         ? null
                         : () async {
+                            // Validation
                             if (currentCtrl.text.isEmpty) {
                               _showToast(
                                   '❌ Enter your current password',
+                                  error: true);
+                              return;
+                            }
+                            if (newCtrl.text.length < 8) {
+                              _showToast(
+                                  '❌ New password must be at least 8 characters',
                                   error: true);
                               return;
                             }
@@ -1269,18 +1190,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   error: true);
                               return;
                             }
-                            if (newCtrl.text.length < 8) {
+                            if (currentCtrl.text ==
+                                newCtrl.text) {
                               _showToast(
-                                  '❌ Password must be at least 8 characters',
+                                  '❌ New password must be different from current',
                                   error: true);
                               return;
                             }
 
-                            setSheetState(
-                                () => isSaving = true);
+                            setSheetState(() => isSaving = true);
+
                             try {
-                              await _apiService
-                                  .changePassword(
+                              await _apiService.changePassword(
                                 currentPassword:
                                     currentCtrl.text,
                                 newPassword: newCtrl.text,
@@ -1288,19 +1209,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               if (mounted) {
                                 Navigator.pop(sheetCtx);
                                 _showToast(
-                                    '✅ Password changed!');
+                                    '✅ Password changed successfully!');
                               }
                             } catch (e) {
                               setSheetState(
                                   () => isSaving = false);
-                              _showToast(
-                                  '❌ ${_apiService.handleError(e)}',
-                                  error: true);
+                              // FIX — specific error messages
+                              final msg = e
+                                  .toString()
+                                  .toLowerCase();
+                              if (msg.contains('incorrect') ||
+                                  msg.contains('wrong') ||
+                                  msg.contains('invalid') ||
+                                  msg.contains('401') ||
+                                  msg.contains('403')) {
+                                _showToast(
+                                    '❌ Current password is incorrect',
+                                    error: true);
+                              } else {
+                                _showToast(
+                                    '❌ ${_apiService.handleError(e)}',
+                                    error: true);
+                              }
                             }
                           },
                     style: ElevatedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(
-                          vertical: 14.h),
+                      padding:
+                          EdgeInsets.symmetric(vertical: 14.h),
                       shape: RoundedRectangleBorder(
                           borderRadius:
                               BorderRadius.circular(12.r)),
@@ -1309,11 +1244,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ? SizedBox(
                             height: 18.h,
                             width: 18.h,
-                            child:
-                                const CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
+                            child: const CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white),
                           )
                         : const Text('Update Password'),
                   ),
@@ -1327,6 +1260,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // FIX — password field with show/hide toggle + helper text
+  Widget _buildPasswordFieldWithToggle({
+    required TextEditingController ctrl,
+    required String label,
+    required bool showPassword,
+    required VoidCallback onToggle,
+    String? helperText,
+    Color? helperColor,
+    ValueChanged<String>? onChanged,
+  }) {
+    return TextField(
+      controller: ctrl,
+      obscureText: !showPassword,
+      onChanged: onChanged,
+      decoration: InputDecoration(
+        labelText: label,
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12.r)),
+        prefixIcon: const Icon(Icons.lock_outline),
+        // FIX — eye icon to show/hide password
+        suffixIcon: IconButton(
+          icon: Icon(
+            showPassword
+                ? Icons.visibility_off_outlined
+                : Icons.visibility_outlined,
+            size: 20.w,
+            color: Colors.grey,
+          ),
+          onPressed: onToggle,
+        ),
+        helperText: helperText,
+        helperStyle: TextStyle(
+            color: helperColor ?? Colors.grey,
+            fontSize: 11.sp),
+      ),
+    );
+  }
+
+  // Keep old simple version for other uses
   Widget _buildPasswordField(
       TextEditingController ctrl, String label) {
     return TextField(
@@ -1342,128 +1314,300 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // SUBSCRIPTION
+  // SUBSCRIPTION — FULLY FIXED (tappable plan cards)
   // ─────────────────────────────────────────────────────────────────────────
 
   void _showSubscriptionDialog() {
+    String selectedPlan = _user?.subscriptionTier ?? 'free';
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (_) => Container(
-        padding: EdgeInsets.all(24.w),
-        decoration: BoxDecoration(
-          color: Theme.of(context).scaffoldBackgroundColor,
-          borderRadius: BorderRadius.vertical(
-              top: Radius.circular(24.r)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Subscription Plans',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(fontWeight: FontWeight.bold)),
-            SizedBox(height: 20.h),
-            _buildPlanCard('🆓 Free',
-                ['2 videos/day', '30s max', 'Basic quality'],
-                false),
-            SizedBox(height: 10.h),
-            _buildPlanCard('🔵 Basic', [
-              '10 videos/day', '60s max',
-              'HD quality', 'No watermark'
-            ], false),
-            SizedBox(height: 10.h),
-            _buildPlanCard('⭐ Pro', [
-              '50 videos/day', '5 min max',
-              '4K quality', 'Priority generation',
-              'All AI features'
-            ], true),
-            SizedBox(height: 20.h),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _showToast('🚀 Redirecting to upgrade...');
-                },
-                style: ElevatedButton.styleFrom(
-                  padding:
-                      EdgeInsets.symmetric(vertical: 14.h),
-                  shape: RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius.circular(12.r)),
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setSheetState) => Container(
+          padding: EdgeInsets.all(24.w),
+          decoration: BoxDecoration(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            borderRadius: BorderRadius.vertical(
+                top: Radius.circular(24.r)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Center(
+                child: Container(
+                  width: 36.w,
+                  height: 4.h,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade600,
+                    borderRadius: BorderRadius.circular(2.r),
+                  ),
                 ),
-                child: const Text('Upgrade Now'),
+              ),
+              SizedBox(height: 16.h),
+              Text('Subscription Plans',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.bold)),
+              SizedBox(height: 6.h),
+              Text('Tap a plan to select it',
+                  style: TextStyle(
+                      fontSize: 12.sp, color: Colors.grey)),
+              SizedBox(height: 20.h),
+
+              _buildPlanCard(
+                name: 'Free',
+                emoji: '🆓',
+                features: [
+                  '2 videos/day',
+                  '30s max',
+                  'Basic quality',
+                ],
+                planKey: 'free',
+                selectedPlan: selectedPlan,
+                onTap: () =>
+                    setSheetState(() => selectedPlan = 'free'),
+              ),
+              SizedBox(height: 10.h),
+              _buildPlanCard(
+                name: 'Basic',
+                emoji: '🔵',
+                features: [
+                  '10 videos/day',
+                  '60s max',
+                  'HD quality',
+                  'No watermark',
+                ],
+                planKey: 'basic',
+                selectedPlan: selectedPlan,
+                onTap: () =>
+                    setSheetState(() => selectedPlan = 'basic'),
+              ),
+              SizedBox(height: 10.h),
+              _buildPlanCard(
+                name: 'Pro',
+                emoji: '⭐',
+                features: [
+                  '50 videos/day',
+                  '5 min max',
+                  '4K quality',
+                  'Priority generation',
+                  'All AI features',
+                ],
+                planKey: 'pro',
+                isBest: true,
+                selectedPlan: selectedPlan,
+                onTap: () =>
+                    setSheetState(() => selectedPlan = 'pro'),
+              ),
+
+              SizedBox(height: 24.h),
+
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed:
+                      selectedPlan == (_user?.subscriptionTier ?? 'free')
+                          ? null
+                          : () {
+                              Navigator.pop(context);
+                              _showToast(
+                                  '🚀 Redirecting to ${_capitalize(selectedPlan)} upgrade...');
+                              // TODO: wire Paystack here
+                            },
+                  style: ElevatedButton.styleFrom(
+                    padding: EdgeInsets.symmetric(vertical: 14.h),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12.r)),
+                    disabledBackgroundColor:
+                        Colors.grey.withOpacity(0.3),
+                  ),
+                  child: Text(
+                    selectedPlan ==
+                            (_user?.subscriptionTier ?? 'free')
+                        ? 'Current Plan'
+                        : 'Upgrade to ${_capitalize(selectedPlan)}',
+                  ),
+                ),
+              ),
+              SizedBox(height: 8.h),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlanCard({
+    required String name,
+    required String emoji,
+    required List<String> features,
+    required String planKey,
+    required String selectedPlan,
+    required VoidCallback onTap,
+    bool isBest = false,
+  }) {
+    final isSelected = selectedPlan == planKey;
+    final isCurrent = (_user?.subscriptionTier ?? 'free') == planKey;
+
+    final Color accentColor = switch (planKey) {
+      'pro'   => Colors.amber,
+      'basic' => Colors.blue,
+      _       => Colors.grey,
+    };
+
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: EdgeInsets.all(16.w),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? accentColor.withOpacity(0.08)
+              : Theme.of(context).cardColor,
+          borderRadius: BorderRadius.circular(14.r),
+          border: Border.all(
+            color: isSelected
+                ? accentColor
+                : Colors.grey.withOpacity(0.2),
+            width: isSelected ? 2 : 1,
+          ),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: accentColor.withOpacity(0.15),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  )
+                ]
+              : null,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(emoji,
+                          style: TextStyle(fontSize: 16.sp)),
+                      SizedBox(width: 8.w),
+                      Text(
+                        name,
+                        style: TextStyle(
+                          fontSize: 15.sp,
+                          fontWeight: FontWeight.bold,
+                          color: isSelected ? accentColor : null,
+                        ),
+                      ),
+                      if (isCurrent) ...[
+                        SizedBox(width: 8.w),
+                        Container(
+                          padding: EdgeInsets.symmetric(
+                              horizontal: 6.w, vertical: 2.h),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withOpacity(0.15),
+                            borderRadius:
+                                BorderRadius.circular(6.r),
+                          ),
+                          child: Text(
+                            'Current',
+                            style: TextStyle(
+                              fontSize: 10.sp,
+                              color: Colors.green,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  SizedBox(height: 8.h),
+                  ...features.map(
+                    (f) => Padding(
+                      padding: EdgeInsets.only(top: 3.h),
+                      child: Row(
+                        children: [
+                          Icon(Icons.check_circle_outline,
+                              size: 14.w,
+                              color: isSelected
+                                  ? accentColor
+                                  : Colors.grey),
+                          SizedBox(width: 6.w),
+                          Text(
+                            f,
+                            style: TextStyle(
+                              fontSize: 12.sp,
+                              color: isSelected
+                                  ? null
+                                  : Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-            SizedBox(height: 8.h),
+            Column(
+              children: [
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: 22.w,
+                  height: 22.w,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: isSelected
+                        ? accentColor
+                        : Colors.transparent,
+                    border: Border.all(
+                      color: isSelected
+                          ? accentColor
+                          : Colors.grey.withOpacity(0.4),
+                      width: 2,
+                    ),
+                  ),
+                  child: isSelected
+                      ? Icon(Icons.check,
+                          color: Colors.white, size: 13.w)
+                      : null,
+                ),
+                if (isBest) ...[
+                  SizedBox(height: 8.h),
+                  Container(
+                    padding: EdgeInsets.symmetric(
+                        horizontal: 8.w, vertical: 4.h),
+                    decoration: BoxDecoration(
+                      color: accentColor,
+                      borderRadius: BorderRadius.circular(8.r),
+                    ),
+                    child: Text(
+                      'Best',
+                      style: TextStyle(
+                        fontSize: 11.sp,
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildPlanCard(
-      String name, List<String> features, bool highlighted) {
-    return Container(
-      padding: EdgeInsets.all(14.w),
-      decoration: BoxDecoration(
-        color: highlighted
-            ? AppTheme.primaryColor.withOpacity(0.1)
-            : Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(14.r),
-        border: Border.all(
-          color: highlighted
-              ? AppTheme.primaryColor
-              : Colors.grey.withOpacity(0.2),
-          width: highlighted ? 1.5 : 1,
-        ),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(name,
-                    style: TextStyle(
-                      fontSize: 15.sp,
-                      fontWeight: FontWeight.bold,
-                      color: highlighted
-                          ? AppTheme.primaryColor
-                          : null,
-                    )),
-                SizedBox(height: 6.h),
-                ...features.map((f) => Padding(
-                      padding: EdgeInsets.only(top: 2.h),
-                      child: Text('✓ $f',
-                          style: TextStyle(
-                              fontSize: 12.sp,
-                              color: Colors.grey)),
-                    )),
-              ],
-            ),
-          ),
-          if (highlighted)
-            Container(
-              padding: EdgeInsets.symmetric(
-                  horizontal: 8.w, vertical: 4.h),
-              decoration: BoxDecoration(
-                color: AppTheme.primaryColor,
-                borderRadius: BorderRadius.circular(8.r),
-              ),
-              child: Text('Best',
-                  style: TextStyle(
-                      fontSize: 11.sp,
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold)),
-            ),
-        ],
-      ),
-    );
-  }
+  // ─────────────────────────────────────────────────────────────────────────
+  // PAYMENT HISTORY
+  // ─────────────────────────────────────────────────────────────────────────
 
   void _showPaymentHistory() {
     showModalBottomSheet(
@@ -1479,6 +1623,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Center(
+              child: Container(
+                width: 36.w,
+                height: 4.h,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade600,
+                  borderRadius: BorderRadius.circular(2.r),
+                ),
+              ),
+            ),
+            SizedBox(height: 16.h),
             Text('Payment History',
                 style: Theme.of(context)
                     .textTheme
@@ -1617,18 +1772,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               leading: Container(
                 padding: EdgeInsets.all(8.w),
                 decoration: BoxDecoration(
-                  color:
-                      AppTheme.primaryColor.withOpacity(0.1),
-                  borderRadius:
-                      BorderRadius.circular(10.r),
+                  color: AppTheme.primaryColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10.r),
                 ),
                 child: Icon(Icons.email_outlined,
-                    color: AppTheme.primaryColor,
-                    size: 20.w),
+                    color: AppTheme.primaryColor, size: 20.w),
               ),
               title: const Text('Email Support'),
-              subtitle:
-                  const Text('chasofficiallz@gmail.com'),
+              subtitle: const Text('chasofficiallz@gmail.com'),
               onTap: () {
                 Navigator.pop(context);
                 Clipboard.setData(const ClipboardData(
@@ -1641,15 +1792,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 padding: EdgeInsets.all(8.w),
                 decoration: BoxDecoration(
                   color: Colors.green.withOpacity(0.1),
-                  borderRadius:
-                      BorderRadius.circular(10.r),
+                  borderRadius: BorderRadius.circular(10.r),
                 ),
                 child: Icon(Icons.chat_outlined,
                     color: Colors.green, size: 20.w),
               ),
               title: const Text('Live Chat'),
-              subtitle:
-                  const Text('Mon–Fri, 9am–6pm WAT'),
+              subtitle: const Text('Mon–Fri, 9am–6pm WAT'),
               onTap: () => Navigator.pop(context),
             ),
           ],
@@ -1689,8 +1838,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16.r)),
         title: const Text('Log Out'),
-        content:
-            const Text('Are you sure you want to log out?'),
+        content: const Text('Are you sure you want to log out?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -1701,8 +1849,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Navigator.pop(context);
               context.read<AuthBloc>().add(LoggedOut());
             },
-            style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red),
+            style:
+                ElevatedButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Log Out',
                 style: TextStyle(color: Colors.white)),
           ),
@@ -1739,8 +1887,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               decoration: InputDecoration(
                 hintText: 'DELETE',
                 border: OutlineInputBorder(
-                    borderRadius:
-                        BorderRadius.circular(10.r)),
+                    borderRadius: BorderRadius.circular(10.r)),
               ),
             ),
           ],
@@ -1753,8 +1900,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           TextButton(
             onPressed: () {
               if (confirmCtrl.text != 'DELETE') {
-                _showToast(
-                    '❌ Please type DELETE to confirm',
+                _showToast('❌ Please type DELETE to confirm',
                     error: true);
                 return;
               }
