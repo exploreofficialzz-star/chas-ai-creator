@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -22,10 +24,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isLoading = true;
   bool _isSaving = false;
 
+  // FIX 1 — debounce timer so rapid toggles don't fire 10 API calls
+  Timer? _saveDebounce;
+
   @override
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _saveDebounce?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -38,7 +49,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         setState(() {
           _settings = results[0] as UserSettings?;
           _user = results[1] as User;
-          // FIX 1 - apply smart defaults if settings come back null
           _settings ??= UserSettings(
             defaultNiche: 'general',
             defaultVideoLength: 30,
@@ -65,24 +75,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _updateSettings(UserSettings newSettings) async {
-    if (_isSaving) return;
-    setState(() {
-      _settings = newSettings;
-      _isSaving = true;
+  // FIX 2 — optimistic update: setState immediately so UI responds instantly,
+  //         then debounce the actual API save by 800ms.
+  //         Removed the `if (_isSaving) return` guard that was silently
+  //         swallowing every toggle press while a save was in-flight.
+  void _updateSettings(UserSettings newSettings) {
+    // Instant UI feedback — no waiting for API
+    setState(() => _settings = newSettings);
+
+    // Cancel any pending save and reschedule
+    _saveDebounce?.cancel();
+    _saveDebounce = Timer(const Duration(milliseconds: 800), () async {
+      if (!mounted) return;
+      setState(() => _isSaving = true);
+      try {
+        await _apiService.updateUserSettings(newSettings);
+        if (mounted) setState(() => _isSaving = false);
+      } catch (e) {
+        if (mounted) {
+          setState(() => _isSaving = false);
+          _showToast('❌ ${_apiService.handleError(e)}', error: true);
+        }
+      }
     });
-    try {
-      await _apiService.updateUserSettings(newSettings);
-      if (mounted) {
-        setState(() => _isSaving = false);
-        _showToast('✅ Settings saved!');
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isSaving = false);
-        _showToast('❌ ${_apiService.handleError(e)}', error: true);
-      }
-    }
   }
 
   void _showToast(String msg, {bool error = false}) {
@@ -110,18 +125,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
       appBar: AppBar(
         title: const Text('Settings'),
         actions: [
-          if (_isSaving)
-            Padding(
-              padding: EdgeInsets.only(right: 16.w),
-              child: SizedBox(
-                width: 18.w,
-                height: 18.w,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: AppTheme.primaryColor,
-                ),
-              ),
-            ),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            child: _isSaving
+                ? Padding(
+                    key: const ValueKey('saving'),
+                    padding: EdgeInsets.only(right: 16.w),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 14.w,
+                          height: 14.w,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppTheme.primaryColor,
+                          ),
+                        ),
+                        SizedBox(width: 6.w),
+                        Text('Saving…',
+                            style: TextStyle(
+                                fontSize: 12.sp,
+                                color: Colors.grey)),
+                      ],
+                    ),
+                  )
+                : const SizedBox.shrink(key: ValueKey('idle')),
+          ),
         ],
       ),
       body: _isLoading
@@ -130,17 +160,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               padding: EdgeInsets.symmetric(
                   horizontal: 16.w, vertical: 8.h),
               children: [
-                // ── Profile card ──────────────────────────────────────
                 _buildProfileCard(),
                 SizedBox(height: 24.h),
 
-                // ── Account ───────────────────────────────────────────
+                // Account
                 _buildSectionHeader('🔐 Account'),
                 _buildCard([
                   _buildTile(
                     icon: Icons.person_outline,
                     title: 'Edit Profile',
-                    subtitle: _user?.displayName ?? _user?.email ?? '',
+                    subtitle:
+                        _user?.displayName ?? _user?.email ?? '',
                     onTap: _showEditProfileDialog,
                   ),
                   _buildDivider(),
@@ -167,19 +197,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 SizedBox(height: 24.h),
 
-                // ── Default video settings ────────────────────────────
+                // Default Video Settings
                 _buildSectionHeader('🎬 Default Video Settings'),
                 _buildCard([
                   _buildTile(
                     icon: Icons.aspect_ratio,
                     title: 'Aspect Ratio',
-                    subtitle: _settings?.defaultAspectRatio ?? '9:16',
-                    onTap: () => _showOptionsDialog(
+                    subtitle:
+                        _settings?.defaultAspectRatio ?? '9:16',
+                    onTap: () => _showOptionsSheet(
                       title: 'Default Aspect Ratio',
                       options: const ['9:16', '16:9', '1:1'],
-                      selected: _settings?.defaultAspectRatio ?? '9:16',
+                      selected:
+                          _settings?.defaultAspectRatio ?? '9:16',
                       onSelected: (v) => _updateSettings(
-                          _settings!.copyWith(defaultAspectRatio: v)),
+                          _settings!
+                              .copyWith(defaultAspectRatio: v)),
                     ),
                   ),
                   _buildDivider(),
@@ -196,13 +229,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     title: 'Visual Style',
                     subtitle: _capitalize(
                         _settings?.defaultStyle ?? 'cinematic'),
-                    onTap: () => _showOptionsDialog(
+                    onTap: () => _showOptionsSheet(
                       title: 'Default Visual Style',
                       options: const [
                         'cinematic', 'realistic', 'cartoon',
-                        'dramatic', 'minimal', 'funny'
+                        'dramatic', 'minimal', 'funny',
                       ],
-                      selected: _settings?.defaultStyle ?? 'cinematic',
+                      selected:
+                          _settings?.defaultStyle ?? 'cinematic',
                       onSelected: (v) => _updateSettings(
                           _settings!.copyWith(defaultStyle: v)),
                     ),
@@ -211,9 +245,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _buildTile(
                     icon: Icons.category_outlined,
                     title: 'Default Niche',
-                    subtitle:
-                        _capitalize(_settings?.defaultNiche ?? 'general'),
-                    onTap: () => _showOptionsDialog(
+                    subtitle: _capitalize(
+                        _settings?.defaultNiche ?? 'general'),
+                    onTap: () => _showOptionsSheet(
                       title: 'Default Niche',
                       options: const [
                         'general', 'fitness', 'cooking', 'travel',
@@ -221,7 +255,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         'motivation', 'gaming', 'music', 'business',
                         'science', 'nature', 'comedy',
                       ],
-                      selected: _settings?.defaultNiche ?? 'general',
+                      selected:
+                          _settings?.defaultNiche ?? 'general',
                       onSelected: (v) => _updateSettings(
                           _settings!.copyWith(defaultNiche: v)),
                     ),
@@ -230,7 +265,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 SizedBox(height: 24.h),
 
-                // ── Audio settings ────────────────────────────────────
+                // Audio & Voice
                 _buildSectionHeader('🎙️ Audio & Voice'),
                 _buildCard([
                   _buildTile(
@@ -238,7 +273,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     title: 'Default Audio Mode',
                     subtitle: _capitalize(
                         _settings?.defaultAudioMode ?? 'narration'),
-                    onTap: () => _showOptionsDialog(
+                    onTap: () => _showOptionsSheet(
                       title: 'Default Audio Mode',
                       options: const [
                         'silent', 'narration', 'soundSync'
@@ -251,7 +286,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       selected:
                           _settings?.defaultAudioMode ?? 'narration',
                       onSelected: (v) => _updateSettings(
-                          _settings!.copyWith(defaultAudioMode: v)),
+                          _settings!
+                              .copyWith(defaultAudioMode: v)),
                     ),
                   ),
                   _buildDivider(),
@@ -259,17 +295,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     icon: Icons.mic_outlined,
                     title: 'Voice Style',
                     subtitle: _capitalize(
-                        _settings?.defaultVoiceStyle ?? 'professional'),
-                    onTap: () => _showOptionsDialog(
+                        _settings?.defaultVoiceStyle ??
+                            'professional'),
+                    onTap: () => _showOptionsSheet(
                       title: 'Voice Style',
                       options: const [
                         'professional', 'friendly', 'dramatic',
-                        'energetic', 'calm', 'authoritative'
+                        'energetic', 'calm', 'authoritative',
                       ],
-                      selected:
-                          _settings?.defaultVoiceStyle ?? 'professional',
+                      selected: _settings?.defaultVoiceStyle ??
+                          'professional',
                       onSelected: (v) => _updateSettings(
-                          _settings!.copyWith(defaultVoiceStyle: v)),
+                          _settings!
+                              .copyWith(defaultVoiceStyle: v)),
                     ),
                   ),
                   _buildDivider(),
@@ -278,38 +316,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     title: 'Music Style',
                     subtitle: _capitalize(
                         _settings?.backgroundMusicStyle ?? 'upbeat'),
-                    onTap: () => _showOptionsDialog(
+                    onTap: () => _showOptionsSheet(
                       title: 'Background Music Style',
                       options: const [
                         'upbeat', 'calm', 'dramatic',
-                        'inspirational', 'epic', 'lofi', 'none'
+                        'inspirational', 'epic', 'lofi', 'none',
                       ],
-                      selected:
-                          _settings?.backgroundMusicStyle ?? 'upbeat',
+                      selected: _settings?.backgroundMusicStyle ??
+                          'upbeat',
                       onSelected: (v) => _updateSettings(
-                          _settings!.copyWith(backgroundMusicStyle: v)),
+                          _settings!
+                              .copyWith(backgroundMusicStyle: v)),
                     ),
                   ),
                   _buildDivider(),
+                  // FIX 3 — activeColor added so the switch is visually correct
                   _buildSwitch(
                     icon: Icons.music_note,
                     title: 'Background Music',
                     subtitle: 'Add music to all videos by default',
                     value: _settings?.backgroundMusicEnabled ?? true,
                     onChanged: (v) => _updateSettings(
-                        _settings!.copyWith(backgroundMusicEnabled: v)),
+                        _settings!
+                            .copyWith(backgroundMusicEnabled: v)),
                   ),
                 ]),
 
                 SizedBox(height: 24.h),
 
-                // ── Caption settings ──────────────────────────────────
+                // Captions
                 _buildSectionHeader('💬 Captions'),
                 _buildCard([
                   _buildSwitch(
                     icon: Icons.closed_caption_outlined,
                     title: 'Enable Captions',
-                    subtitle: 'Show captions on all videos by default',
+                    subtitle:
+                        'Show captions on all videos by default',
                     value: _settings?.captionsEnabled ?? true,
                     onChanged: (v) => _updateSettings(
                         _settings!.copyWith(captionsEnabled: v)),
@@ -318,9 +360,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _buildTile(
                     icon: Icons.text_fields,
                     title: 'Caption Style',
-                    subtitle:
-                        _capitalize(_settings?.captionStyle ?? 'modern'),
-                    onTap: () => _showOptionsDialog(
+                    subtitle: _capitalize(
+                        _settings?.captionStyle ?? 'modern'),
+                    onTap: () => _showOptionsSheet(
                       title: 'Caption Style',
                       options: const [
                         'modern', 'classic', 'bold', 'minimal', 'fun'
@@ -337,21 +379,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     subtitle: 'Include emojis in caption text',
                     value: _settings?.captionEmojiEnabled ?? true,
                     onChanged: (v) => _updateSettings(
-                        _settings!.copyWith(captionEmojiEnabled: v)),
+                        _settings!
+                            .copyWith(captionEmojiEnabled: v)),
                   ),
                 ]),
 
                 SizedBox(height: 24.h),
 
-                // ── Platform defaults ─────────────────────────────────
+                // Platform defaults
                 _buildSectionHeader('📱 Default Platforms'),
-                _buildCard([
-                  _buildPlatformSelector(),
-                ]),
+                _buildCard([_buildPlatformSelector()]),
 
                 SizedBox(height: 24.h),
 
-                // ── Character consistency ─────────────────────────────
+                // AI Generation
                 _buildSectionHeader('🎭 AI Generation'),
                 _buildCard([
                   _buildSwitch(
@@ -359,8 +400,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     title: 'Character Consistency',
                     subtitle:
                         'Keep characters the same across all scenes',
-                    value:
-                        _settings?.characterConsistencyEnabled ?? false,
+                    value: _settings?.characterConsistencyEnabled ??
+                        false,
                     onChanged: (v) => _updateSettings(_settings!
                         .copyWith(characterConsistencyEnabled: v)),
                   ),
@@ -368,13 +409,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 SizedBox(height: 24.h),
 
-                // ── Notifications ─────────────────────────────────────
+                // Notifications
                 _buildSectionHeader('🔔 Notifications'),
                 _buildCard([
                   _buildSwitch(
                     icon: Icons.notifications_outlined,
                     title: 'Push Notifications',
-                    value: _settings?.pushNotificationsEnabled ?? true,
+                    value:
+                        _settings?.pushNotificationsEnabled ?? true,
                     onChanged: (v) => _updateSettings(_settings!
                         .copyWith(pushNotificationsEnabled: v)),
                   ),
@@ -382,7 +424,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _buildSwitch(
                     icon: Icons.email_outlined,
                     title: 'Email Notifications',
-                    value: _settings?.emailNotificationsEnabled ?? true,
+                    value:
+                        _settings?.emailNotificationsEnabled ?? true,
                     onChanged: (v) => _updateSettings(_settings!
                         .copyWith(emailNotificationsEnabled: v)),
                   ),
@@ -390,16 +433,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _buildSwitch(
                     icon: Icons.check_circle_outline,
                     title: 'Video Complete Alert',
-                    subtitle: 'Notify when a video finishes generating',
+                    subtitle:
+                        'Notify when a video finishes generating',
                     value: _settings?.notifyOnVideoComplete ?? true,
-                    onChanged: (v) => _updateSettings(
-                        _settings!.copyWith(notifyOnVideoComplete: v)),
+                    onChanged: (v) => _updateSettings(_settings!
+                        .copyWith(notifyOnVideoComplete: v)),
                   ),
                 ]),
 
                 SizedBox(height: 24.h),
 
-                // ── Privacy ───────────────────────────────────────────
+                // Privacy
                 _buildSectionHeader('🔒 Privacy & Security'),
                 _buildCard([
                   _buildTile(
@@ -420,7 +464,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 SizedBox(height: 24.h),
 
-                // ── About ─────────────────────────────────────────────
+                // About
                 _buildSectionHeader('ℹ️ About'),
                 _buildCard([
                   _buildTile(
@@ -450,10 +494,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ]),
 
                 SizedBox(height: 24.h),
-
-                // ── Logout ────────────────────────────────────────────
                 _buildLogoutButton(),
-
                 SizedBox(height: 40.h),
               ],
             ),
@@ -475,14 +516,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         child: Row(
           children: [
-            // Avatar
             Container(
               width: 60.w,
               height: 60.w,
               decoration: BoxDecoration(
                 color: Colors.white24,
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white38, width: 2),
+                border:
+                    Border.all(color: Colors.white38, width: 2),
               ),
               child: _user?.avatarUrl != null
                   ? ClipOval(
@@ -495,10 +536,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     )
                   : _buildAvatarFallback(),
             ),
-
             SizedBox(width: 16.w),
-
-            // Info
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -522,8 +560,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
               ),
             ),
-
-            Icon(Icons.edit_outlined, color: Colors.white70, size: 18.w),
+            Icon(Icons.edit_outlined,
+                color: Colors.white70, size: 18.w),
           ],
         ),
       ),
@@ -557,7 +595,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _       => '🆓 FREE',
     };
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 4.h),
+      padding: EdgeInsets.symmetric(
+          horizontal: 10.w, vertical: 4.h),
       decoration: BoxDecoration(
         color: color.withOpacity(0.2),
         borderRadius: BorderRadius.circular(20.r),
@@ -584,7 +623,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // PLATFORM SELECTOR
+  // PLATFORM SELECTOR — FIX 4: setState called synchronously for instant chip
+  // highlight, _updateSettings called after for debounced API save
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildPlatformSelector() {
@@ -597,6 +637,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'linkedin':  ('💼', 'LinkedIn'),
     };
 
+    // FIX 4 — read directly from _settings inside build so chips
+    // always show the current live state after toggles
     final selected = Set<String>.from(
         _settings?.defaultTargetPlatforms ?? ['tiktok']);
 
@@ -607,7 +649,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           Text(
             'Default platforms for hashtag & format optimization',
-            style: TextStyle(fontSize: 12.sp, color: Colors.grey),
+            style:
+                TextStyle(fontSize: 12.sp, color: Colors.grey),
           ),
           SizedBox(height: 12.h),
           Wrap(
@@ -619,13 +662,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onTap: () {
                   final updated = Set<String>.from(selected);
                   if (isSelected) {
+                    // keep at least one platform always selected
                     if (updated.length > 1) updated.remove(e.key);
                   } else {
                     updated.add(e.key);
                   }
+                  // FIX 4 — _updateSettings already calls setState
+                  // optimistically so chip highlights immediately
                   _updateSettings(_settings!.copyWith(
-                    defaultTargetPlatforms: updated.toList(),
-                  ));
+                      defaultTargetPlatforms: updated.toList()));
                 },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
@@ -696,9 +741,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(16.r),
-        border: Border.all(
-          color: Colors.grey.withOpacity(0.1),
-        ),
+        border:
+            Border.all(color: Colors.grey.withOpacity(0.1)),
       ),
       child: Column(children: children),
     );
@@ -719,7 +763,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         width: 36.w,
         height: 36.w,
         decoration: BoxDecoration(
-          color: (textColor ?? AppTheme.primaryColor).withOpacity(0.1),
+          color: (textColor ?? AppTheme.primaryColor)
+              .withOpacity(0.1),
           borderRadius: BorderRadius.circular(10.r),
         ),
         child: Icon(icon,
@@ -735,11 +780,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
       subtitle: subtitle != null
-          ? Text(
-              subtitle,
-              style: TextStyle(
-                  fontSize: 12.sp, color: Colors.grey),
-            )
+          ? Text(subtitle,
+              style:
+                  TextStyle(fontSize: 12.sp, color: Colors.grey))
           : null,
       trailing: trailingWidget ??
           Icon(Icons.chevron_right,
@@ -748,6 +791,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // FIX 3 — added activeColor + activeTrackColor so switch shows
+  // the app's primary color when on, not the system default
   Widget _buildSwitch({
     required IconData icon,
     required String title,
@@ -773,9 +818,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               fontSize: 14.sp, fontWeight: FontWeight.w500)),
       subtitle: subtitle != null
           ? Text(subtitle,
-              style: TextStyle(
-                  fontSize: 12.sp, color: Colors.grey))
+              style:
+                  TextStyle(fontSize: 12.sp, color: Colors.grey))
           : null,
+      // FIX 3 — these two lines were missing, causing grey/system switches
+      activeColor: Colors.white,
+      activeTrackColor: AppTheme.primaryColor,
       value: value,
       onChanged: onChanged,
     );
@@ -795,7 +843,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         decoration: BoxDecoration(
           color: Colors.red.withOpacity(0.08),
           borderRadius: BorderRadius.circular(16.r),
-          border: Border.all(color: Colors.red.withOpacity(0.2)),
+          border:
+              Border.all(color: Colors.red.withOpacity(0.2)),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -817,10 +866,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // DIALOGS
+  // OPTIONS BOTTOM SHEET — renamed from _showOptionsDialog for clarity
+  // FIX 5 — uses bottom sheet not AlertDialog so options list can scroll
   // ─────────────────────────────────────────────────────────────────────────
 
-  void _showOptionsDialog({
+  void _showOptionsSheet({
     required String title,
     required List<String> options,
     List<String>? labels,
@@ -830,62 +880,100 @@ class _SettingsScreenState extends State<SettingsScreen> {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (_) => Container(
-        padding: EdgeInsets.all(20.w),
-        decoration: BoxDecoration(
-          color: Theme.of(context).scaffoldBackgroundColor,
-          borderRadius:
-              BorderRadius.vertical(top: Radius.circular(20.r)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 36.w,
-                height: 4.h,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(2.r),
+      isScrollControlled: true,
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.5,
+        minChildSize: 0.3,
+        maxChildSize: 0.85,
+        expand: false,
+        builder: (_, scrollCtrl) => Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            borderRadius:
+                BorderRadius.vertical(top: Radius.circular(20.r)),
+          ),
+          child: Column(
+            children: [
+              // Handle + title
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                    20.w, 12.h, 20.w, 0),
+                child: Column(
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36.w,
+                        height: 4.h,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade300,
+                          borderRadius:
+                              BorderRadius.circular(2.r),
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: 14.h),
+                    Text(title,
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(
+                                fontWeight: FontWeight.bold)),
+                    SizedBox(height: 8.h),
+                    Divider(
+                        color: Colors.grey.withOpacity(0.1)),
+                  ],
                 ),
               ),
-            ),
-            SizedBox(height: 16.h),
-            Text(title,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold)),
-            SizedBox(height: 12.h),
-            ...options.asMap().entries.map((entry) {
-              final opt = entry.value;
-              final label = labels?[entry.key] ?? _capitalize(opt);
-              final isSelected = opt == selected;
-              return ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(label,
-                    style: TextStyle(
-                      fontSize: 14.sp,
-                      color: isSelected
-                          ? AppTheme.primaryColor
+              // Options list — scrollable
+              Expanded(
+                child: ListView.builder(
+                  controller: scrollCtrl,
+                  padding: EdgeInsets.symmetric(
+                      horizontal: 12.w, vertical: 4.h),
+                  itemCount: options.length,
+                  itemBuilder: (_, i) {
+                    final opt = options[i];
+                    final label = labels?[i] ?? _capitalize(opt);
+                    final isSelected = opt == selected;
+                    return ListTile(
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 8.w),
+                      title: Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 14.sp,
+                          color: isSelected
+                              ? AppTheme.primaryColor
+                              : null,
+                          fontWeight: isSelected
+                              ? FontWeight.w600
+                              : FontWeight.normal,
+                        ),
+                      ),
+                      trailing: isSelected
+                          ? Container(
+                              width: 28.w,
+                              height: 28.w,
+                              decoration: BoxDecoration(
+                                color: AppTheme.primaryColor,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(Icons.check,
+                                  color: Colors.white,
+                                  size: 14.w),
+                            )
                           : null,
-                      fontWeight: isSelected
-                          ? FontWeight.w600
-                          : FontWeight.normal,
-                    )),
-                trailing: isSelected
-                    ? Icon(Icons.check,
-                        color: AppTheme.primaryColor, size: 18.w)
-                    : null,
-                onTap: () {
-                  Navigator.pop(context);
-                  onSelected(opt);
-                },
-              );
-            }),
-            SizedBox(height: 8.h),
-          ],
+                      onTap: () {
+                        Navigator.pop(context);
+                        onSelected(opt);
+                      },
+                    );
+                  },
+                ),
+              ),
+              SizedBox(height: 16.h),
+            ],
+          ),
         ),
       ),
     );
@@ -893,7 +981,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   void _showDurationSelector() {
     final durations = [10, 15, 20, 30, 45, 60, 90, 120];
-    _showOptionsDialog(
+    _showOptionsSheet(
       title: 'Default Duration',
       options: durations.map((d) => '$d').toList(),
       labels: durations.map((d) => '$d seconds').toList(),
@@ -903,13 +991,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // EDIT PROFILE
+  // ─────────────────────────────────────────────────────────────────────────
+
   void _showEditProfileDialog() {
-    final nameController = TextEditingController(
-      text: _user?.displayName ?? '',
-    );
-    final bioController = TextEditingController(
-      text: _user?.bio ?? '',
-    );
+    final nameCtrl = TextEditingController(
+        text: _user?.displayName ?? '');
+    final bioCtrl =
+        TextEditingController(text: _user?.bio ?? '');
 
     showModalBottomSheet(
       context: context,
@@ -917,8 +1007,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       backgroundColor: Colors.transparent,
       builder: (_) => Padding(
         padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
-        ),
+            bottom: MediaQuery.of(context).viewInsets.bottom),
         child: Container(
           padding: EdgeInsets.all(24.w),
           decoration: BoxDecoration(
@@ -937,22 +1026,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ?.copyWith(fontWeight: FontWeight.bold)),
               SizedBox(height: 20.h),
               TextField(
-                controller: nameController,
+                controller: nameCtrl,
+                textCapitalization: TextCapitalization.words,
                 decoration: InputDecoration(
                   labelText: 'Display Name',
                   border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12.r)),
+                      borderRadius:
+                          BorderRadius.circular(12.r)),
                   prefixIcon: const Icon(Icons.person_outline),
                 ),
               ),
               SizedBox(height: 14.h),
               TextField(
-                controller: bioController,
+                controller: bioCtrl,
                 maxLines: 3,
+                maxLength: 160,
                 decoration: InputDecoration(
                   labelText: 'Bio (optional)',
                   border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12.r)),
+                      borderRadius:
+                          BorderRadius.circular(12.r)),
                   prefixIcon: const Icon(Icons.info_outline),
                 ),
               ),
@@ -963,20 +1056,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onPressed: () async {
                     Navigator.pop(context);
                     try {
-                      final updated = await _apiService.updateProfile(
-                        displayName: nameController.text.trim(),
-                        bio: bioController.text.trim(),
+                      final updated =
+                          await _apiService.updateProfile(
+                        displayName: nameCtrl.text.trim(),
+                        bio: bioCtrl.text.trim(),
                       );
-                      setState(() => _user = updated);
-                      _showToast('✅ Profile updated!');
+                      if (mounted) {
+                        setState(() => _user = updated);
+                        _showToast('✅ Profile updated!');
+                      }
                     } catch (e) {
-                      _showToast(_apiService.handleError(e), error: true);
+                      _showToast(_apiService.handleError(e),
+                          error: true);
                     }
                   },
                   style: ElevatedButton.styleFrom(
-                    padding: EdgeInsets.symmetric(vertical: 14.h),
+                    padding:
+                        EdgeInsets.symmetric(vertical: 14.h),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12.r)),
+                        borderRadius:
+                            BorderRadius.circular(12.r)),
                   ),
                   child: const Text('Save Changes'),
                 ),
@@ -989,6 +1088,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // CHANGE PASSWORD
+  // ─────────────────────────────────────────────────────────────────────────
+
   void _showChangePasswordDialog() {
     final currentCtrl = TextEditingController();
     final newCtrl = TextEditingController();
@@ -998,7 +1101,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => Padding(
+      builder: (sheetCtx) => Padding(
         padding: EdgeInsets.only(
             bottom: MediaQuery.of(context).viewInsets.bottom),
         child: Container(
@@ -1022,12 +1125,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               SizedBox(height: 12.h),
               _buildPasswordField(newCtrl, 'New Password'),
               SizedBox(height: 12.h),
-              _buildPasswordField(confirmCtrl, 'Confirm New Password'),
+              _buildPasswordField(
+                  confirmCtrl, 'Confirm New Password'),
               SizedBox(height: 20.h),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: () {
+                  onPressed: () async {
                     if (newCtrl.text != confirmCtrl.text) {
                       _showToast('❌ Passwords do not match',
                           error: true);
@@ -1035,17 +1139,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     }
                     if (newCtrl.text.length < 8) {
                       _showToast(
-                          '❌ New password must be at least 8 characters',
+                          '❌ Password must be at least 8 characters',
                           error: true);
                       return;
                     }
-                    Navigator.pop(context);
-                    _showToast('✅ Password changed successfully!');
+                    Navigator.pop(sheetCtx);
+                    try {
+                      // FIX 6 — actually call the API
+                      await _apiService.changePassword(
+                        currentPassword: currentCtrl.text,
+                        newPassword: newCtrl.text,
+                      );
+                      _showToast('✅ Password changed!');
+                    } catch (e) {
+                      _showToast(_apiService.handleError(e),
+                          error: true);
+                    }
                   },
                   style: ElevatedButton.styleFrom(
-                    padding: EdgeInsets.symmetric(vertical: 14.h),
+                    padding:
+                        EdgeInsets.symmetric(vertical: 14.h),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12.r)),
+                        borderRadius:
+                            BorderRadius.circular(12.r)),
                   ),
                   child: const Text('Update Password'),
                 ),
@@ -1072,10 +1188,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // SUBSCRIPTION
+  // ─────────────────────────────────────────────────────────────────────────
+
   void _showSubscriptionDialog() {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (_) => Container(
         padding: EdgeInsets.all(24.w),
         decoration: BoxDecoration(
@@ -1093,23 +1214,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ?.copyWith(fontWeight: FontWeight.bold)),
             SizedBox(height: 20.h),
             _buildPlanCard('🆓 Free',
-                ['2 videos/day', '30s max', 'Basic quality'], false),
-            SizedBox(height: 10.h),
-            _buildPlanCard(
-                '🔵 Basic',
-                ['10 videos/day', '60s max', 'HD quality', 'No watermark'],
+                ['2 videos/day', '30s max', 'Basic quality'],
                 false),
             SizedBox(height: 10.h),
-            _buildPlanCard(
-                '⭐ Pro',
-                [
-                  '50 videos/day',
-                  '5 min max',
-                  '4K quality',
-                  'Priority generation',
-                  'All AI features'
-                ],
-                true),
+            _buildPlanCard('🔵 Basic', [
+              '10 videos/day',
+              '60s max',
+              'HD quality',
+              'No watermark'
+            ], false),
+            SizedBox(height: 10.h),
+            _buildPlanCard('⭐ Pro', [
+              '50 videos/day',
+              '5 min max',
+              '4K quality',
+              'Priority generation',
+              'All AI features'
+            ], true),
             SizedBox(height: 20.h),
             SizedBox(
               width: double.infinity,
@@ -1119,9 +1240,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _showToast('🚀 Redirecting to upgrade...');
                 },
                 style: ElevatedButton.styleFrom(
-                  padding: EdgeInsets.symmetric(vertical: 14.h),
+                  padding:
+                      EdgeInsets.symmetric(vertical: 14.h),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12.r)),
+                      borderRadius:
+                          BorderRadius.circular(12.r)),
                 ),
                 child: const Text('Upgrade Now'),
               ),
@@ -1226,6 +1349,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // PRIVACY / LEGAL / ABOUT
+  // ─────────────────────────────────────────────────────────────────────────
+
   void _showExportDataDialog() {
     showDialog(
       context: context,
@@ -1234,7 +1361,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             borderRadius: BorderRadius.circular(16.r)),
         title: const Text('Export My Data'),
         content: const Text(
-          'We will prepare a complete export of all your videos, settings, and account data and send it to your email address within 24 hours.',
+          'We will prepare a complete export of all your videos, settings, and account data and send it to your email within 24 hours.',
         ),
         actions: [
           TextButton(
@@ -1244,7 +1371,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              _showToast('✅ Export request submitted! Check your email.');
+              _showToast(
+                  '✅ Export requested! Check your email soon.');
             },
             child: const Text('Request Export'),
           ),
@@ -1304,10 +1432,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _showTextDialog(
       'Privacy Policy',
       'chAs AI Creator collects your email and usage data solely to provide the service. '
-      'We do not sell your personal data to third parties. '
-      'Your videos are stored securely and only accessible by you. '
-      'You may request complete data deletion at any time by contacting support. '
-      'We use industry-standard encryption to protect all your data.',
+          'We do not sell your personal data to third parties. '
+          'Your videos are stored securely and only accessible by you. '
+          'You may request complete data deletion at any time by contacting support. '
+          'We use industry-standard encryption to protect all your data.',
     );
   }
 
@@ -1315,13 +1443,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _showTextDialog(
       'Terms of Service',
       'By using chAs AI Creator, you agree to use the app responsibly. '
-      'You must not use the app to generate harmful, illegal, misleading, or hateful content. '
-      'All generated content remains your intellectual property. '
-      'chAs Tech Group reserves the right to suspend accounts that violate these terms. '
-      'Free tier is limited to 2 videos per day. Abuse of the free tier may result in account suspension.',
+          'You must not use the app to generate harmful, illegal, misleading, or hateful content. '
+          'All generated content remains your intellectual property. '
+          'chAs Tech Group reserves the right to suspend accounts that violate these terms. '
+          'Free tier is limited to 2 videos per day. Abuse of the free tier may result in account suspension.',
     );
   }
 
+  // FIX 7 — updated to chasofficiallz@gmail.com as requested
   void _showContactSupport() {
     showDialog(
       context: context,
@@ -1333,18 +1462,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.email_outlined),
+              leading: Container(
+                padding: EdgeInsets.all(8.w),
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10.r),
+                ),
+                child: Icon(Icons.email_outlined,
+                    color: AppTheme.primaryColor, size: 20.w),
+              ),
               title: const Text('Email Support'),
-              subtitle: const Text('support@chastech.ai'),
+              // FIX 7 — updated support email as requested
+              subtitle:
+                  const Text('chasofficiallz@gmail.com'),
               onTap: () {
                 Navigator.pop(context);
-                Clipboard.setData(
-                    const ClipboardData(text: 'support@chastech.ai'));
-                _showToast('✅ Email copied!');
+                Clipboard.setData(const ClipboardData(
+                    text: 'chasofficiallz@gmail.com'));
+                _showToast('✅ Email copied to clipboard!');
               },
             ),
             ListTile(
-              leading: const Icon(Icons.chat_outlined),
+              leading: Container(
+                padding: EdgeInsets.all(8.w),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10.r),
+                ),
+                child: Icon(Icons.chat_outlined,
+                    color: Colors.green, size: 20.w),
+              ),
               title: const Text('Live Chat'),
               subtitle: const Text('Mon–Fri, 9am–6pm WAT'),
               onTap: () => Navigator.pop(context),
@@ -1426,14 +1573,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             SizedBox(height: 16.h),
             Text('Type DELETE to confirm:',
                 style: TextStyle(
-                    fontSize: 12.sp, fontWeight: FontWeight.w600)),
+                    fontSize: 12.sp,
+                    fontWeight: FontWeight.w600)),
             SizedBox(height: 8.h),
             TextField(
               controller: confirmCtrl,
               decoration: InputDecoration(
                 hintText: 'DELETE',
                 border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10.r)),
+                    borderRadius:
+                        BorderRadius.circular(10.r)),
               ),
             ),
           ],
@@ -1446,7 +1595,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           TextButton(
             onPressed: () {
               if (confirmCtrl.text != 'DELETE') {
-                _showToast('❌ Please type DELETE to confirm',
+                _showToast(
+                    '❌ Please type DELETE to confirm',
                     error: true);
                 return;
               }
