@@ -46,7 +46,6 @@ class RegisterWithEmail extends AuthEvent {
   List<Object?> get props => [email, password, displayName];
 }
 
-// FIX 1 — was missing entirely, caused build error in login_screen.dart
 class ResetPassword extends AuthEvent {
   final String email;
   const ResetPassword({required this.email});
@@ -54,11 +53,8 @@ class ResetPassword extends AuthEvent {
   List<Object?> get props => [email];
 }
 
-// FIX 2 — removed LoginWithApple (app uses custom JWT, no Apple Sign In)
-// Kept Google as optional social login
 class LoginWithGoogle extends AuthEvent {}
 
-// New — update user profile after edit
 class UpdateUser extends AuthEvent {
   final User user;
   const UpdateUser({required this.user});
@@ -66,10 +62,8 @@ class UpdateUser extends AuthEvent {
   List<Object?> get props => [user];
 }
 
-// New — refresh user from backend (credits changed, tier upgraded etc.)
 class RefreshUser extends AuthEvent {}
 
-// New — clear auth error without triggering full reload
 class ClearAuthError extends AuthEvent {}
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -102,11 +96,13 @@ class AuthError extends AuthState {
   List<Object?> get props => [message];
 }
 
-// FIX 3 — dedicated state so UI can show "check your email" message
-// without getting confused with AuthError
-class PasswordResetSent extends AuthState {
+// FIX 1 — PasswordResetSent now EXTENDS Unauthenticated so app.dart's
+// BlocBuilder treats it like Unauthenticated and keeps LoginScreen visible.
+// Previously it fell through to the default `return SplashScreen()` case
+// and the app got stuck on a blank splash screen after reset.
+class PasswordResetSent extends Unauthenticated {
   final String email;
-  const PasswordResetSent({required this.email});
+  PasswordResetSent({required this.email});
   @override
   List<Object?> get props => [email];
 }
@@ -125,7 +121,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<LoginWithGoogle>(_onLoginWithGoogle);
     on<LoggedIn>(_onLoggedIn);
     on<LoggedOut>(_onLoggedOut);
-    on<ResetPassword>(_onResetPassword);   // FIX 1
+    on<ResetPassword>(_onResetPassword);
     on<UpdateUser>(_onUpdateUser);
     on<RefreshUser>(_onRefreshUser);
     on<ClearAuthError>(_onClearAuthError);
@@ -145,7 +141,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         if (user != null) {
           emit(Authenticated(user: user));
         } else {
-          // FIX 4 — token exists but user fetch failed → force logout
+          // Token exists but user fetch failed — force clean logout
           await authService.signOut();
           emit(Unauthenticated());
         }
@@ -153,6 +149,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         emit(Unauthenticated());
       }
     } catch (e) {
+      // FIX 2 — never stay stuck on AuthLoading if AppStarted throws
       emit(Unauthenticated());
     }
   }
@@ -169,9 +166,11 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         event.email,
         event.password,
       );
+      // FIX 3 — emit Authenticated directly; app.dart BlocBuilder handles
+      // the navigation to HomeScreen automatically. Do NOT navigate manually
+      // in login_screen.dart — that causes a double navigation bug.
       emit(Authenticated(user: user));
     } catch (e) {
-      // FIX 5 — clean error messages, don't expose raw exceptions
       emit(AuthError(message: _cleanError(e)));
     }
   }
@@ -210,7 +209,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     }
   }
 
-  // ── Reset password — FIX 1 ────────────────────────────────────────────────
+  // ── Reset password ─────────────────────────────────────────────────────────
 
   Future<void> _onResetPassword(
     ResetPassword event,
@@ -219,7 +218,9 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     emit(AuthLoading());
     try {
       await authService.resetPassword(event.email);
-      // FIX 3 — emit dedicated state, not generic AuthError
+      // FIX 1 — PasswordResetSent extends Unauthenticated so LoginScreen
+      // stays visible. The BlocListener in login_screen.dart catches this
+      // state and shows the "check your email" snackbar.
       emit(PasswordResetSent(email: event.email));
     } catch (e) {
       emit(AuthError(message: _cleanError(e)));
@@ -245,8 +246,8 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     try {
       await authService.signOut();
     } catch (_) {
-      // FIX 6 — always emit Unauthenticated even if signOut API fails
-      // so the user is never stuck on a loading screen
+      // FIX 4 — always reach Unauthenticated even if API signOut fails
+      // so user is never stuck on loading screen
     } finally {
       emit(Unauthenticated());
     }
@@ -258,8 +259,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     UpdateUser event,
     Emitter<AuthState> emit,
   ) async {
-    // FIX 7 — update user in state without full reload
-    // Used after profile edit, credit change, tier upgrade
+    // FIX 5 — only update if currently authenticated, never downgrade state
     if (state is Authenticated) {
       emit(Authenticated(user: event.user));
     }
@@ -271,15 +271,17 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     RefreshUser event,
     Emitter<AuthState> emit,
   ) async {
-    // Keep current state visible while refreshing
     final current = state;
     try {
       final user = await authService.getCurrentUser();
       if (user != null) {
         emit(Authenticated(user: user));
+      } else {
+        // FIX 6 — if refresh returns null, restore previous state
+        // rather than silently doing nothing
+        emit(current);
       }
     } catch (_) {
-      // Silently fail — keep current state
       emit(current);
     }
   }
@@ -290,7 +292,8 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     ClearAuthError event,
     Emitter<AuthState> emit,
   ) async {
-    if (state is AuthError) {
+    // FIX 7 — also clear PasswordResetSent state (extends Unauthenticated)
+    if (state is AuthError || state is PasswordResetSent) {
       emit(Unauthenticated());
     }
   }
@@ -299,11 +302,10 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   // HELPERS
   // ─────────────────────────────────────────────────────────────────────────
 
-  // FIX 5 — map raw exceptions to user-friendly messages
   String _cleanError(Object e) {
     final raw = e.toString().toLowerCase();
 
-    if (raw.contains('invalid') && raw.contains('credential') ||
+    if ((raw.contains('invalid') && raw.contains('credential')) ||
         raw.contains('wrong password') ||
         raw.contains('incorrect password')) {
       return 'Incorrect email or password. Please try again.';
@@ -325,21 +327,23 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         raw.contains('timeout')) {
       return 'Network error. Please check your connection.';
     }
-    if (raw.contains('too many') || raw.contains('rate limit') ||
+    if (raw.contains('too many') ||
+        raw.contains('rate limit') ||
         raw.contains('429')) {
       return 'Too many attempts. Please wait a moment and try again.';
     }
-    if (raw.contains('weak password') || raw.contains('password too short')) {
+    if (raw.contains('weak password') ||
+        raw.contains('password too short')) {
       return 'Password must be at least 8 characters.';
     }
-    if (raw.contains('invalid email') || raw.contains('email format')) {
+    if (raw.contains('invalid email') ||
+        raw.contains('email format')) {
       return 'Please enter a valid email address.';
     }
     if (raw.contains('500') || raw.contains('server error')) {
       return 'Server error. Please try again in a moment.';
     }
 
-    // Last resort — don't expose raw Dart/HTTP error text
     return 'Something went wrong. Please try again.';
   }
 }
