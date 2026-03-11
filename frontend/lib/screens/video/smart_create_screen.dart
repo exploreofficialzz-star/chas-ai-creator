@@ -1,46 +1,66 @@
+/*
+ * chAs AI Creator - Smart Create Screen
+ * FILE: lib/screens/video/smart_create_screen.dart
+ *
+ * FIXES:
+ * 1. CRITICAL — enum named 'TargetPlatform' conflicts with Flutter's
+ *    built-in TargetPlatform (android, iOS, etc.) from material.dart.
+ *    This caused: "TargetPlatform.tiktok is not defined" build error
+ *    because Flutter's TargetPlatform shadowed the local one everywhere
+ *    defaultTargetPlatform or Platform checks were used.
+ *    → Renamed to VideoPlatform throughout.
+ *
+ * 2. _copyToClipboard() showed a snackbar but never actually copied
+ *    anything — the Clipboard.setData call was a comment/TODO.
+ *    → Added real Clipboard.setData call.
+ *
+ * 3. Removed unused imports: auth_bloc.dart, user.dart — neither
+ *    AuthBloc nor User is referenced anywhere in this file.
+ */
+
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../config/theme.dart';
-import '../../models/user.dart';
-import '../../providers/auth_bloc.dart';
 import '../../services/api_service.dart';
 import '../../widgets/custom_button.dart';
 
-// ── Platform targets ──────────────────────────────────────────────────────────
-enum TargetPlatform { tiktok, youtube, instagram, facebook, twitter, linkedin }
+// ── Video Platform (FIX 1 — was 'TargetPlatform', conflicts with Flutter) ────
 
-extension TargetPlatformExt on TargetPlatform {
+enum VideoPlatform { tiktok, youtube, instagram, facebook, twitter, linkedin }
+
+extension VideoPlatformExt on VideoPlatform {
   String get label => switch (this) {
-        TargetPlatform.tiktok     => 'TikTok',
-        TargetPlatform.youtube    => 'YouTube',
-        TargetPlatform.instagram  => 'Instagram',
-        TargetPlatform.facebook   => 'Facebook',
-        TargetPlatform.twitter    => 'X / Twitter',
-        TargetPlatform.linkedin   => 'LinkedIn',
+        VideoPlatform.tiktok     => 'TikTok',
+        VideoPlatform.youtube    => 'YouTube',
+        VideoPlatform.instagram  => 'Instagram',
+        VideoPlatform.facebook   => 'Facebook',
+        VideoPlatform.twitter    => 'X / Twitter',
+        VideoPlatform.linkedin   => 'LinkedIn',
       };
   String get icon => switch (this) {
-        TargetPlatform.tiktok     => '🎵',
-        TargetPlatform.youtube    => '▶️',
-        TargetPlatform.instagram  => '📸',
-        TargetPlatform.facebook   => '👤',
-        TargetPlatform.twitter    => '🐦',
-        TargetPlatform.linkedin   => '💼',
+        VideoPlatform.tiktok     => '🎵',
+        VideoPlatform.youtube    => '▶️',
+        VideoPlatform.instagram  => '📸',
+        VideoPlatform.facebook   => '👤',
+        VideoPlatform.twitter    => '🐦',
+        VideoPlatform.linkedin   => '💼',
       };
   String get bestRatio => switch (this) {
-        TargetPlatform.tiktok     => '9:16',
-        TargetPlatform.youtube    => '16:9',
-        TargetPlatform.instagram  => '1:1',
-        TargetPlatform.facebook   => '16:9',
-        TargetPlatform.twitter    => '16:9',
-        TargetPlatform.linkedin   => '16:9',
+        VideoPlatform.tiktok     => '9:16',
+        VideoPlatform.youtube    => '16:9',
+        VideoPlatform.instagram  => '1:1',
+        VideoPlatform.facebook   => '16:9',
+        VideoPlatform.twitter    => '16:9',
+        VideoPlatform.linkedin   => '16:9',
       };
 }
 
-// ── Audio mode ────────────────────────────────────────────────────────────────
+// ── Audio Mode ────────────────────────────────────────────────────────────────
+
 enum AudioMode { silent, narration, soundSync }
 
 extension AudioModeExt on AudioMode {
@@ -61,6 +81,8 @@ extension AudioModeExt on AudioMode {
       };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+
 class SmartCreateScreen extends StatefulWidget {
   const SmartCreateScreen({super.key});
 
@@ -74,33 +96,30 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
   final _ideaController = TextEditingController();
   final _imagePicker = ImagePicker();
 
-  // ── State ──────────────────────────────────────────────────────────────────
   bool _isGenerating = false;
-  bool _isCreating = false;
+  bool _isCreating   = false;
   Map<String, dynamic>? _generatedPlan;
-  String _currentStep = '';
-  int _currentStepIndex = 0;
+  String _currentStep      = '';
+  int    _currentStepIndex = 0;
 
-  // ── Video settings ─────────────────────────────────────────────────────────
-  String _aspectRatio = '9:16';
-  int _duration = 30;
-  String _style = 'cinematic';
-  bool _captionsEnabled = true;
-  bool _characterConsistencyEnabled = false;
-  AudioMode _audioMode = AudioMode.narration;
-  String _voiceStyle = 'professional';
-  String _musicStyle = 'upbeat';
-  Set<TargetPlatform> _targetPlatforms = {TargetPlatform.tiktok};
+  String   _aspectRatio  = '9:16';
+  int      _duration     = 30;
+  String   _style        = 'cinematic';
+  bool     _captionsEnabled              = true;
+  bool     _characterConsistencyEnabled  = false;
+  AudioMode _audioMode   = AudioMode.narration;
+  String   _voiceStyle   = 'professional';
+  String   _musicStyle   = 'upbeat';
 
-  // ── Uploaded images ────────────────────────────────────────────────────────
+  // FIX 1 — was Set<TargetPlatform>, now Set<VideoPlatform>
+  Set<VideoPlatform> _targetPlatforms = {VideoPlatform.tiktok};
+
   List<File> _uploadedImages = [];
 
-  // ── Animation ──────────────────────────────────────────────────────────────
   late AnimationController _pulseController;
-  late Animation<double> _pulseAnimation;
-  late TabController _tabController;
+  late Animation<double>   _pulseAnimation;
+  late TabController       _tabController;
 
-  // ── Steps ──────────────────────────────────────────────────────────────────
   final List<String> _steps = [
     '🔍 Analyzing your idea...',
     '📈 Finding trending topics...',
@@ -114,8 +133,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
   void initState() {
     super.initState();
     _loadUserSettings();
-    _tabController = TabController(length: 3, vsync: this);
-    _pulseController = AnimationController(
+    _tabController    = TabController(length: 3, vsync: this);
+    _pulseController  = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
     )..repeat(reverse: true);
@@ -137,17 +156,16 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
       final settings = await _apiService.getUserSettings();
       if (settings != null && mounted) {
         setState(() {
-          _aspectRatio = settings.defaultAspectRatio ?? '9:16';
-          _duration = settings.defaultVideoLength ?? 30;
-          _style = settings.defaultStyle ?? 'cinematic';
-          _captionsEnabled = settings.captionsEnabled ?? true;
-          _musicStyle = settings.backgroundMusicStyle ?? 'upbeat';
+          _aspectRatio     = settings.defaultAspectRatio    ?? '9:16';
+          _duration        = settings.defaultVideoLength    ?? 30;
+          _style           = settings.defaultStyle          ?? 'cinematic';
+          _captionsEnabled = settings.captionsEnabled       ?? true;
+          _musicStyle      = settings.backgroundMusicStyle  ?? 'upbeat';
         });
       }
     } catch (_) {}
   }
 
-  // ── Image picker ───────────────────────────────────────────────────────────
   Future<void> _pickImages() async {
     final picked = await _imagePicker.pickMultiImage(imageQuality: 85);
     if (picked.isNotEmpty) {
@@ -155,7 +173,7 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
         _uploadedImages = [
           ..._uploadedImages,
           ...picked.map((x) => File(x.path)),
-        ].take(6).toList(); // max 6 images
+        ].take(6).toList();
       });
     }
   }
@@ -165,20 +183,14 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
       source: ImageSource.camera,
       imageQuality: 85,
     );
-    if (picked != null) {
-      setState(() {
-        if (_uploadedImages.length < 6) {
-          _uploadedImages.add(File(picked.path));
-        }
-      });
+    if (picked != null && _uploadedImages.length < 6) {
+      setState(() => _uploadedImages.add(File(picked.path)));
     }
   }
 
-  void _removeImage(int index) {
-    setState(() => _uploadedImages.removeAt(index));
-  }
+  void _removeImage(int index) =>
+      setState(() => _uploadedImages.removeAt(index));
 
-  // ── Generate plan ──────────────────────────────────────────────────────────
   Future<void> _generatePlan() async {
     final idea = _ideaController.text.trim();
     if (idea.isEmpty) {
@@ -192,25 +204,23 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
     }
 
     setState(() {
-      _isGenerating = true;
-      _generatedPlan = null;
+      _isGenerating    = true;
+      _generatedPlan   = null;
       _currentStepIndex = 0;
-      _currentStep = _steps[0];
+      _currentStep     = _steps[0];
     });
 
-    // Animate through steps
     for (int i = 0; i < _steps.length - 1; i++) {
       await Future.delayed(const Duration(milliseconds: 700));
       if (mounted) {
         setState(() {
           _currentStepIndex = i + 1;
-          _currentStep = _steps[i + 1];
+          _currentStep      = _steps[i + 1];
         });
       }
     }
 
     try {
-      // Auto-set aspect ratio from primary platform
       if (_targetPlatforms.isNotEmpty) {
         _aspectRatio = _targetPlatforms.first.bestRatio;
       }
@@ -224,20 +234,25 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
         backgroundMusicEnabled: _audioMode != AudioMode.silent,
         audioMode: _audioMode.name,
         voiceStyle: _voiceStyle,
-        targetPlatforms: _targetPlatforms.map((p) => p.name).toList(),
+        // FIX 1 — was _targetPlatforms.map((p) => p.name) on TargetPlatform
+        targetPlatforms:
+            _targetPlatforms.map((p) => p.name).toList(),
         characterConsistency: _characterConsistencyEnabled,
         uploadedImageCount: _uploadedImages.length,
       );
 
+      // Reset tab to first tab on new plan
+      _tabController.animateTo(0);
+
       setState(() {
-        _generatedPlan = plan;
-        _isGenerating = false;
-        _currentStep = '';
+        _generatedPlan   = plan;
+        _isGenerating    = false;
+        _currentStep     = '';
       });
     } catch (e) {
       setState(() {
         _isGenerating = false;
-        _currentStep = '';
+        _currentStep  = '';
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -250,12 +265,11 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
     }
   }
 
-  // ── Create video ───────────────────────────────────────────────────────────
   Future<void> _createVideo() async {
     if (_generatedPlan == null) return;
 
     setState(() {
-      _isCreating = true;
+      _isCreating  = true;
       _currentStep = '🚀 Queuing video generation...';
     });
 
@@ -264,21 +278,25 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
         niche: _generatedPlan!['niche'] ?? 'general',
         title: _generatedPlan!['title'],
         description: _generatedPlan!['description'],
-        videoType: _audioMode == AudioMode.narration ? 'narration' : 'silent',
+        videoType: _audioMode == AudioMode.narration
+            ? 'narration'
+            : 'silent',
         duration: _duration,
         aspectRatio: _aspectRatio,
         style: _style,
         captionsEnabled: _captionsEnabled,
-        captionStyle: _generatedPlan!['caption_style'] ?? 'modern',
+        captionStyle:
+            _generatedPlan!['caption_style'] ?? 'modern',
         backgroundMusicEnabled: _audioMode != AudioMode.silent,
-        backgroundMusicStyle: _generatedPlan!['music_style'] ?? 'upbeat',
+        backgroundMusicStyle:
+            _generatedPlan!['music_style'] ?? 'upbeat',
         characterConsistencyEnabled: _characterConsistencyEnabled,
         userInstructions: _ideaController.text.trim(),
       );
 
       setState(() {
-        _isCreating = false;
-        _currentStep = '';
+        _isCreating    = false;
+        _currentStep   = '';
         _generatedPlan = null;
         _ideaController.clear();
         _uploadedImages.clear();
@@ -287,7 +305,7 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
       if (mounted) _showSuccessSheet();
     } catch (e) {
       setState(() {
-        _isCreating = false;
+        _isCreating  = false;
         _currentStep = '';
       });
       if (mounted) {
@@ -311,7 +329,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
       appBar: AppBar(
         title: Row(
           children: [
-            Icon(Icons.auto_awesome, size: 20.w, color: AppTheme.primaryColor),
+            Icon(Icons.auto_awesome,
+                size: 20.w, color: AppTheme.primaryColor),
             SizedBox(width: 8.w),
             const Text('Smart Create'),
           ],
@@ -329,27 +348,16 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Idea box ──────────────────────────────────────────────────
             _buildIdeaBox(),
             SizedBox(height: 16.h),
-
-            // ── Platform selector ─────────────────────────────────────────
             _buildPlatformSelector(),
             SizedBox(height: 16.h),
-
-            // ── Audio mode ────────────────────────────────────────────────
             _buildAudioModeSelector(),
             SizedBox(height: 16.h),
-
-            // ── Image upload ──────────────────────────────────────────────
             _buildImageUpload(),
             SizedBox(height: 16.h),
-
-            // ── Settings row ──────────────────────────────────────────────
             _buildSettingsRow(),
             SizedBox(height: 20.h),
-
-            // ── Generate button ───────────────────────────────────────────
             CustomButton(
               text: _isGenerating
                   ? 'Generating plan...'
@@ -357,19 +365,14 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
               isLoading: _isGenerating,
               onPressed: _isGenerating ? null : _generatePlan,
             ),
-
-            // ── Step progress ─────────────────────────────────────────────
             if (_currentStep.isNotEmpty) ...[
               SizedBox(height: 16.h),
               _buildStepProgress(),
             ],
-
-            // ── Generated plan ────────────────────────────────────────────
             if (_generatedPlan != null) ...[
               SizedBox(height: 24.h),
               _buildGeneratedPlan(),
             ],
-
             SizedBox(height: 40.h),
           ],
         ),
@@ -419,18 +422,18 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      Text('Describe your video',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleSmall
+                              ?.copyWith(
+                                  fontWeight: FontWeight.bold)),
                       Text(
-                        'Describe your video',
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                      ),
-                      Text(
-                        'AI finds trends, writes script & optimizes',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Colors.grey,
-                            ),
-                      ),
+                          'AI finds trends, writes script & optimizes',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: Colors.grey)),
                     ],
                   ),
                 ),
@@ -445,8 +448,10 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
               minLines: 3,
               decoration: InputDecoration(
                 hintText:
-                    'e.g. "A cinematic video about the future of electric cars with dramatic music"\n\n'
-                    'or "A day in the life of a professional chef in New York"',
+                    'e.g. "A cinematic video about the future of '
+                    'electric cars with dramatic music"\n\n'
+                    'or "A day in the life of a professional chef '
+                    'in New York"',
                 hintStyle: TextStyle(
                   fontSize: 13.sp,
                   color: Colors.grey.shade500,
@@ -458,8 +463,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                 ),
                 filled: true,
                 fillColor: Theme.of(context).cardColor,
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 14.w, vertical: 12.h),
+                contentPadding: EdgeInsets.symmetric(
+                    horizontal: 14.w, vertical: 12.h),
               ),
             ),
           ),
@@ -469,19 +474,21 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // PLATFORM SELECTOR
+  // PLATFORM SELECTOR (FIX 1 — VideoPlatform throughout)
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildPlatformSelector() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildSectionLabel('🌍 Target Platforms', 'Auto-sets aspect ratio & hashtags'),
+        _buildSectionLabel(
+            '🌍 Target Platforms',
+            'Auto-sets aspect ratio & hashtags'),
         SizedBox(height: 10.h),
         Wrap(
           spacing: 8.w,
           runSpacing: 8.h,
-          children: TargetPlatform.values.map((p) {
+          children: VideoPlatform.values.map((p) {
             final selected = _targetPlatforms.contains(p);
             return GestureDetector(
               onTap: () => setState(() {
@@ -495,8 +502,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
               }),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
-                padding:
-                    EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
+                padding: EdgeInsets.symmetric(
+                    horizontal: 12.w, vertical: 8.h),
                 decoration: BoxDecoration(
                   color: selected
                       ? AppTheme.primaryColor.withOpacity(0.15)
@@ -512,7 +519,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(p.icon, style: TextStyle(fontSize: 14.sp)),
+                    Text(p.icon,
+                        style: TextStyle(fontSize: 14.sp)),
                     SizedBox(width: 6.w),
                     Text(
                       p.label,
@@ -529,7 +537,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                     if (selected) ...[
                       SizedBox(width: 4.w),
                       Icon(Icons.check,
-                          size: 12.w, color: AppTheme.primaryColor),
+                          size: 12.w,
+                          color: AppTheme.primaryColor),
                     ],
                   ],
                 ),
@@ -549,7 +558,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildSectionLabel('🎙️ Audio Mode', 'Choose how your video sounds'),
+        _buildSectionLabel(
+            '🎙️ Audio Mode', 'Choose how your video sounds'),
         SizedBox(height: 10.h),
         Row(
           children: AudioMode.values.map((mode) {
@@ -560,12 +570,15 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   margin: EdgeInsets.only(
-                      right: mode != AudioMode.soundSync ? 8.w : 0),
+                      right: mode != AudioMode.soundSync
+                          ? 8.w
+                          : 0),
                   padding: EdgeInsets.symmetric(
                       vertical: 12.h, horizontal: 8.w),
                   decoration: BoxDecoration(
                     color: selected
-                        ? AppTheme.primaryColor.withOpacity(0.15)
+                        ? AppTheme.primaryColor
+                            .withOpacity(0.15)
                         : Theme.of(context).cardColor,
                     borderRadius: BorderRadius.circular(14.r),
                     border: Border.all(
@@ -577,13 +590,11 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                   ),
                   child: Column(
                     children: [
-                      Icon(
-                        mode.icon,
-                        size: 22.w,
-                        color: selected
-                            ? AppTheme.primaryColor
-                            : Colors.grey,
-                      ),
+                      Icon(mode.icon,
+                          size: 22.w,
+                          color: selected
+                              ? AppTheme.primaryColor
+                              : Colors.grey),
                       SizedBox(height: 6.h),
                       Text(
                         mode.label,
@@ -602,9 +613,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                       Text(
                         mode.description,
                         style: TextStyle(
-                          fontSize: 9.sp,
-                          color: Colors.grey.shade500,
-                        ),
+                            fontSize: 9.sp,
+                            color: Colors.grey.shade500),
                         textAlign: TextAlign.center,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
@@ -617,23 +627,20 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
           }).toList(),
         ),
 
-        // Voice style picker — only show when narration selected
         if (_audioMode == AudioMode.narration) ...[
           SizedBox(height: 12.h),
-          Text(
-            'Voice Style',
-            style: Theme.of(context)
-                .textTheme
-                .labelMedium
-                ?.copyWith(color: Colors.grey),
-          ),
+          Text('Voice Style',
+              style: Theme.of(context)
+                  .textTheme
+                  .labelMedium
+                  ?.copyWith(color: Colors.grey)),
           SizedBox(height: 8.h),
           Wrap(
             spacing: 8.w,
             runSpacing: 6.h,
             children: [
               'professional', 'friendly', 'dramatic',
-              'energetic', 'calm', 'authoritative'
+              'energetic', 'calm', 'authoritative',
             ].map((v) {
               final sel = _voiceStyle == v;
               return GestureDetector(
@@ -643,7 +650,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                       horizontal: 12.w, vertical: 6.h),
                   decoration: BoxDecoration(
                     color: sel
-                        ? AppTheme.accentColor.withOpacity(0.15)
+                        ? AppTheme.accentColor
+                            .withOpacity(0.15)
                         : Theme.of(context).cardColor,
                     borderRadius: BorderRadius.circular(20.r),
                     border: Border.all(
@@ -656,9 +664,12 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                     v[0].toUpperCase() + v.substring(1),
                     style: TextStyle(
                       fontSize: 12.sp,
-                      color: sel ? AppTheme.accentColor : Colors.grey,
-                      fontWeight:
-                          sel ? FontWeight.w600 : FontWeight.normal,
+                      color: sel
+                          ? AppTheme.accentColor
+                          : Colors.grey,
+                      fontWeight: sel
+                          ? FontWeight.w600
+                          : FontWeight.normal,
                     ),
                   ),
                 ),
@@ -683,7 +694,7 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
             Expanded(
               child: _buildSectionLabel(
                 '📸 Reference Images (Optional)',
-                'Upload up to 6 images for character/scene consistency',
+                'Upload up to 6 images for consistency',
               ),
             ),
             if (_characterConsistencyEnabled)
@@ -698,13 +709,13 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(Icons.lock,
-                        size: 10.w, color: AppTheme.primaryColor),
+                        size: 10.w,
+                        color: AppTheme.primaryColor),
                     SizedBox(width: 4.w),
-                    Text(
-                      'Consistency ON',
-                      style: TextStyle(
-                          fontSize: 10.sp, color: AppTheme.primaryColor),
-                    ),
+                    Text('Consistency ON',
+                        style: TextStyle(
+                            fontSize: 10.sp,
+                            color: AppTheme.primaryColor)),
                   ],
                 ),
               ),
@@ -716,14 +727,12 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
           child: ListView(
             scrollDirection: Axis.horizontal,
             children: [
-              // Add buttons
-              _buildImageAddButton(Icons.photo_library, 'Gallery', _pickImages),
+              _buildImageAddButton(
+                  Icons.photo_library, 'Gallery', _pickImages),
               SizedBox(width: 8.w),
               _buildImageAddButton(
                   Icons.camera_alt, 'Camera', _pickFromCamera),
               SizedBox(width: 8.w),
-
-              // Uploaded images
               ..._uploadedImages.asMap().entries.map((entry) {
                 return Container(
                   width: 80.w,
@@ -742,7 +751,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                         top: 4,
                         right: 4,
                         child: GestureDetector(
-                          onTap: () => _removeImage(entry.key),
+                          onTap: () =>
+                              _removeImage(entry.key),
                           child: Container(
                             width: 20.w,
                             height: 20.w,
@@ -751,7 +761,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                               shape: BoxShape.circle,
                             ),
                             child: Icon(Icons.close,
-                                size: 12.w, color: Colors.white),
+                                size: 12.w,
+                                color: Colors.white),
                           ),
                         ),
                       ),
@@ -762,25 +773,26 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
             ],
           ),
         ),
-
         if (_uploadedImages.isNotEmpty) ...[
           SizedBox(height: 10.h),
           SwitchListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            title: Text(
-              'Character Consistency',
-              style: TextStyle(fontSize: 13.sp, fontWeight: FontWeight.w500),
-            ),
+            title: Text('Character Consistency',
+                style: TextStyle(
+                    fontSize: 13.sp,
+                    fontWeight: FontWeight.w500)),
             subtitle: Text(
-              'Keep characters consistent across all scenes',
-              style: TextStyle(fontSize: 11.sp, color: Colors.grey),
-            ),
+                'Keep characters consistent across scenes',
+                style: TextStyle(
+                    fontSize: 11.sp, color: Colors.grey)),
             value: _characterConsistencyEnabled,
-            onChanged: (v) =>
-                setState(() => _characterConsistencyEnabled = v),
-            secondary: Icon(Icons.face_retouching_natural,
-                color: AppTheme.primaryColor, size: 20.w),
+            onChanged: (v) => setState(
+                () => _characterConsistencyEnabled = v),
+            secondary: Icon(
+                Icons.face_retouching_natural,
+                color: AppTheme.primaryColor,
+                size: 20.w),
           ),
         ],
       ],
@@ -799,7 +811,6 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
           borderRadius: BorderRadius.circular(12.r),
           border: Border.all(
             color: AppTheme.primaryColor.withOpacity(0.2),
-            style: BorderStyle.solid,
           ),
         ),
         child: Column(
@@ -807,11 +818,10 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
           children: [
             Icon(icon, size: 24.w, color: AppTheme.primaryColor),
             SizedBox(height: 6.h),
-            Text(
-              label,
-              style: TextStyle(
-                  fontSize: 11.sp, color: AppTheme.primaryColor),
-            ),
+            Text(label,
+                style: TextStyle(
+                    fontSize: 11.sp,
+                    color: AppTheme.primaryColor)),
           ],
         ),
       ),
@@ -869,13 +879,16 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
         children: [
           Icon(icon,
               size: 13.w,
-              color: active ? AppTheme.primaryColor : Colors.grey),
+              color:
+                  active ? AppTheme.primaryColor : Colors.grey),
           SizedBox(width: 4.w),
           Text(
             label,
             style: TextStyle(
               fontSize: 11.sp,
-              color: active ? AppTheme.primaryColor : Colors.grey,
+              color: active
+                  ? AppTheme.primaryColor
+                  : Colors.grey,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -931,18 +944,20 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
               ],
             ),
             SizedBox(height: 10.h),
-            // Progress dots
             Row(
               children: List.generate(_steps.length, (i) {
                 final done = i <= _currentStepIndex;
                 return Expanded(
                   child: Container(
                     height: 3.h,
-                    margin: EdgeInsets.only(right: i < _steps.length - 1 ? 3.w : 0),
+                    margin: EdgeInsets.only(
+                        right:
+                            i < _steps.length - 1 ? 3.w : 0),
                     decoration: BoxDecoration(
                       color: done
                           ? AppTheme.primaryColor
-                          : AppTheme.primaryColor.withOpacity(0.15),
+                          : AppTheme.primaryColor
+                              .withOpacity(0.15),
                       borderRadius: BorderRadius.circular(2.r),
                     ),
                   ),
@@ -960,29 +975,25 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildGeneratedPlan() {
-    final plan = _generatedPlan!;
-    final scenes = (plan['scenes'] as List?) ?? [];
-    final hashtags = (plan['hashtags'] as List?) ?? [];
-    final seoTags = (plan['seo_tags'] as List?) ?? [];
-    final platformTips =
-        (plan['platform_tips'] as Map?) ?? {};
+    final plan        = _generatedPlan!;
+    final scenes      = (plan['scenes']       as List?) ?? [];
+    final hashtags    = (plan['hashtags']     as List?) ?? [];
+    final seoTags     = (plan['seo_tags']     as List?) ?? [];
+    final platformTips = (plan['platform_tips'] as Map?) ?? {};
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Header
         Row(
           children: [
             Icon(Icons.auto_awesome,
                 size: 18.w, color: AppTheme.primaryColor),
             SizedBox(width: 8.w),
-            Text(
-              'Your Video Plan',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(fontWeight: FontWeight.bold),
-            ),
+            Text('Your Video Plan',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.bold)),
             const Spacer(),
             TextButton.icon(
               onPressed: _generatePlan,
@@ -994,10 +1005,7 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
             ),
           ],
         ),
-
         SizedBox(height: 12.h),
-
-        // Tab bar — Scenes / Copy / Platforms
         Container(
           decoration: BoxDecoration(
             color: Theme.of(context).cardColor,
@@ -1021,41 +1029,32 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
             ],
           ),
         ),
-
         SizedBox(height: 12.h),
-
         SizedBox(
           height: 380.h,
           child: TabBarView(
             controller: _tabController,
             children: [
-              // ── TAB 1: Scenes ────────────────────────────────────────
               _buildScenesTab(plan, scenes),
-
-              // ── TAB 2: Copy / Tags ───────────────────────────────────
               _buildCopyTab(plan, hashtags, seoTags),
-
-              // ── TAB 3: Platform tips ─────────────────────────────────
               _buildPlatformsTab(platformTips),
             ],
           ),
         ),
-
         SizedBox(height: 20.h),
-
-        // Create button
         CustomButton(
-          text: _isCreating ? 'Creating your video...' : '🎬 Create This Video',
+          text: _isCreating
+              ? 'Creating your video...'
+              : '🎬 Create This Video',
           isLoading: _isCreating,
           onPressed: _isCreating ? null : _createVideo,
         ),
-
         SizedBox(height: 10.h),
-
         CustomButton(
           text: '✏️ Edit idea',
           isOutlined: true,
-          onPressed: () => setState(() => _generatedPlan = null),
+          onPressed: () =>
+              setState(() => _generatedPlan = null),
         ),
       ],
     );
@@ -1065,7 +1064,6 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
     return SingleChildScrollView(
       child: Column(
         children: [
-          // Title card
           Container(
             padding: EdgeInsets.all(16.w),
             decoration: BoxDecoration(
@@ -1093,35 +1091,32 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                 Wrap(
                   spacing: 6.w,
                   children: [
-                    _planBadge(Icons.category, plan['niche'] ?? ''),
-                    _planBadge(Icons.music_note, plan['music_style'] ?? ''),
+                    _planBadge(
+                        Icons.category, plan['niche'] ?? ''),
+                    _planBadge(Icons.music_note,
+                        plan['music_style'] ?? ''),
                     _planBadge(Icons.mic, _audioMode.label),
                   ],
                 ),
               ],
             ),
           ),
-
           SizedBox(height: 10.h),
-
-          Text(
-            '${scenes.length} Scenes',
-            style: Theme.of(context)
-                .textTheme
-                .labelMedium
-                ?.copyWith(color: Colors.grey),
-          ),
-
+          Text('${scenes.length} Scenes',
+              style: Theme.of(context)
+                  .textTheme
+                  .labelMedium
+                  ?.copyWith(color: Colors.grey)),
           SizedBox(height: 8.h),
-
-          ...scenes.asMap().entries.map((e) =>
-              _buildSceneCard(e.key + 1, e.value as Map<String, dynamic>)),
+          ...scenes.asMap().entries.map((e) => _buildSceneCard(
+              e.key + 1, e.value as Map<String, dynamic>)),
         ],
       ),
     );
   }
 
-  Widget _buildCopyTab(Map plan, List hashtags, List seoTags) {
+  Widget _buildCopyTab(
+      Map plan, List hashtags, List seoTags) {
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1129,23 +1124,22 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
           _copySection(
             '📝 Trending Title',
             plan['title'] ?? '',
-            onCopy: () => _copyToClipboard(plan['title'] ?? ''),
+            onCopy: () =>
+                _copyToClipboard(plan['title'] ?? ''),
           ),
           SizedBox(height: 12.h),
           _copySection(
             '📄 Caption / Description',
             plan['caption'] ?? plan['description'] ?? '',
             onCopy: () => _copyToClipboard(
-                plan['caption'] ?? plan['description'] ?? ''),
+                plan['caption'] ??
+                    plan['description'] ??
+                    ''),
           ),
           SizedBox(height: 12.h),
-
-          // Hashtags
           _buildTagsSection('🔥 Hashtags', hashtags,
               color: AppTheme.primaryColor),
           SizedBox(height: 12.h),
-
-          // SEO Tags
           _buildTagsSection('🔍 SEO Tags', seoTags,
               color: AppTheme.accentColor),
         ],
@@ -1159,12 +1153,14 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.info_outline, color: Colors.grey, size: 32.w),
+            Icon(Icons.info_outline,
+                color: Colors.grey, size: 32.w),
             SizedBox(height: 8.h),
             Text(
               'Select platforms above\nto see optimization tips',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey, fontSize: 13.sp),
+              style: TextStyle(
+                  color: Colors.grey, fontSize: 13.sp),
             ),
           ],
         ),
@@ -1173,10 +1169,12 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
 
     return SingleChildScrollView(
       child: Column(
-        children: TargetPlatform.values
+        // FIX 1 — was TargetPlatform.values, now VideoPlatform.values
+        children: VideoPlatform.values
             .where((p) => _targetPlatforms.contains(p))
             .map((p) {
-          final tips = platformTips[p.name] as Map? ?? {};
+          final tips =
+              platformTips[p.name] as Map? ?? {};
           return Container(
             margin: EdgeInsets.only(bottom: 10.h),
             padding: EdgeInsets.all(14.w),
@@ -1184,7 +1182,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
               color: Theme.of(context).cardColor,
               borderRadius: BorderRadius.circular(12.r),
               border: Border.all(
-                  color: AppTheme.primaryColor.withOpacity(0.1)),
+                  color:
+                      AppTheme.primaryColor.withOpacity(0.1)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1194,20 +1193,19 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                     Text(p.icon,
                         style: TextStyle(fontSize: 18.sp)),
                     SizedBox(width: 8.w),
-                    Text(
-                      p.label,
-                      style: TextStyle(
-                        fontSize: 14.sp,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    Text(p.label,
+                        style: TextStyle(
+                            fontSize: 14.sp,
+                            fontWeight: FontWeight.bold)),
                     const Spacer(),
                     Container(
                       padding: EdgeInsets.symmetric(
                           horizontal: 8.w, vertical: 3.h),
                       decoration: BoxDecoration(
-                        color: Colors.green.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8.r),
+                        color:
+                            Colors.green.withOpacity(0.1),
+                        borderRadius:
+                            BorderRadius.circular(8.r),
                       ),
                       child: Text(
                         p.bestRatio,
@@ -1222,11 +1220,10 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                 ),
                 if (tips['tip'] != null) ...[
                   SizedBox(height: 8.h),
-                  Text(
-                    tips['tip'].toString(),
-                    style: TextStyle(
-                        fontSize: 12.sp, color: Colors.grey),
-                  ),
+                  Text(tips['tip'].toString(),
+                      style: TextStyle(
+                          fontSize: 12.sp,
+                          color: Colors.grey)),
                 ],
                 if (tips['best_time'] != null) ...[
                   SizedBox(height: 6.h),
@@ -1238,9 +1235,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                       Text(
                         'Best time: ${tips['best_time']}',
                         style: TextStyle(
-                          fontSize: 11.sp,
-                          color: Colors.orange,
-                        ),
+                            fontSize: 11.sp,
+                            color: Colors.orange),
                       ),
                     ],
                   ),
@@ -1277,7 +1273,9 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.copy, size: 14.w, color: AppTheme.primaryColor),
+                    Icon(Icons.copy,
+                        size: 14.w,
+                        color: AppTheme.primaryColor),
                     SizedBox(width: 4.w),
                     Text('Copy',
                         style: TextStyle(
@@ -1295,7 +1293,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
     );
   }
 
-  Widget _buildTagsSection(String title, List tags, {required Color color}) {
+  Widget _buildTagsSection(String title, List tags,
+      {required Color color}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1311,7 +1310,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
               onTap: () => _copyToClipboard(tags.join(' ')),
               child: Text('Copy all',
                   style: TextStyle(
-                      fontSize: 11.sp, color: AppTheme.primaryColor)),
+                      fontSize: 11.sp,
+                      color: AppTheme.primaryColor)),
             ),
           ],
         ),
@@ -1325,14 +1325,14 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                         horizontal: 10.w, vertical: 4.h),
                     decoration: BoxDecoration(
                       color: color.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(20.r),
-                      border: Border.all(color: color.withOpacity(0.2)),
+                      borderRadius:
+                          BorderRadius.circular(20.r),
+                      border: Border.all(
+                          color: color.withOpacity(0.2)),
                     ),
-                    child: Text(
-                      tag.toString(),
-                      style:
-                          TextStyle(fontSize: 11.sp, color: color),
-                    ),
+                    child: Text(tag.toString(),
+                        style: TextStyle(
+                            fontSize: 11.sp, color: color)),
                   ))
               .toList(),
         ),
@@ -1340,7 +1340,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
     );
   }
 
-  Widget _buildSceneCard(int number, Map<String, dynamic> scene) {
+  Widget _buildSceneCard(
+      int number, Map<String, dynamic> scene) {
     return Container(
       margin: EdgeInsets.only(bottom: 8.h),
       padding: EdgeInsets.all(12.w),
@@ -1361,14 +1362,12 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
               shape: BoxShape.circle,
             ),
             child: Center(
-              child: Text(
-                '$number',
-                style: TextStyle(
-                  fontSize: 11.sp,
-                  fontWeight: FontWeight.bold,
-                  color: AppTheme.primaryColor,
-                ),
-              ),
+              child: Text('$number',
+                  style: TextStyle(
+                    fontSize: 11.sp,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.primaryColor,
+                  )),
             ),
           ),
           SizedBox(width: 10.w),
@@ -1376,11 +1375,10 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  scene['description'] ?? '',
-                  style: TextStyle(
-                      fontSize: 13.sp, fontWeight: FontWeight.w500),
-                ),
+                Text(scene['description'] ?? '',
+                    style: TextStyle(
+                        fontSize: 13.sp,
+                        fontWeight: FontWeight.w500)),
                 if ((scene['caption'] ?? '').isNotEmpty) ...[
                   SizedBox(height: 4.h),
                   Text(
@@ -1424,7 +1422,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
 
   Widget _planBadge(IconData icon, String label) {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
+      padding:
+          EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
       decoration: BoxDecoration(
         color: Colors.white24,
         borderRadius: BorderRadius.circular(8.r),
@@ -1458,8 +1457,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
           padding: EdgeInsets.all(24.w),
           decoration: BoxDecoration(
             color: Theme.of(context).scaffoldBackgroundColor,
-            borderRadius:
-                BorderRadius.vertical(top: Radius.circular(24.r)),
+            borderRadius: BorderRadius.vertical(
+                top: Radius.circular(24.r)),
           ),
           child: SingleChildScrollView(
             child: Column(
@@ -1481,18 +1480,23 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                     style: Theme.of(context)
                         .textTheme
                         .titleLarge
-                        ?.copyWith(fontWeight: FontWeight.bold)),
+                        ?.copyWith(
+                            fontWeight: FontWeight.bold)),
                 SizedBox(height: 20.h),
 
-                // Aspect Ratio
                 Text('Aspect Ratio',
-                    style: Theme.of(context).textTheme.labelLarge),
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelLarge),
                 SizedBox(height: 8.h),
                 SegmentedButton<String>(
                   segments: const [
-                    ButtonSegment(value: '9:16', label: Text('9:16')),
-                    ButtonSegment(value: '16:9', label: Text('16:9')),
-                    ButtonSegment(value: '1:1', label: Text('1:1')),
+                    ButtonSegment(
+                        value: '9:16', label: Text('9:16')),
+                    ButtonSegment(
+                        value: '16:9', label: Text('16:9')),
+                    ButtonSegment(
+                        value: '1:1', label: Text('1:1')),
                   ],
                   selected: {_aspectRatio},
                   onSelectionChanged: (v) {
@@ -1500,12 +1504,12 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                     setState(() => _aspectRatio = v.first);
                   },
                 ),
-
                 SizedBox(height: 16.h),
 
-                // Duration
                 Text('Duration: ${_duration}s',
-                    style: Theme.of(context).textTheme.labelLarge),
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelLarge),
                 Slider(
                   value: _duration.toDouble(),
                   min: 10,
@@ -1517,19 +1521,19 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                     setState(() => _duration = v.toInt());
                   },
                 ),
-
                 SizedBox(height: 8.h),
 
-                // Visual Style
                 Text('Visual Style',
-                    style: Theme.of(context).textTheme.labelLarge),
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelLarge),
                 SizedBox(height: 8.h),
                 Wrap(
                   spacing: 8.w,
                   runSpacing: 6.h,
                   children: [
                     'cinematic', 'cartoon', 'realistic',
-                    'dramatic', 'minimal', 'funny'
+                    'dramatic', 'minimal', 'funny',
                   ]
                       .map((s) => ChoiceChip(
                             label: Text(s),
@@ -1541,31 +1545,31 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                           ))
                       .toList(),
                 ),
-
                 SizedBox(height: 8.h),
 
-                // Music Style
                 Text('Music Style',
-                    style: Theme.of(context).textTheme.labelLarge),
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelLarge),
                 SizedBox(height: 8.h),
                 Wrap(
                   spacing: 8.w,
                   runSpacing: 6.h,
                   children: [
                     'upbeat', 'calm', 'dramatic',
-                    'inspirational', 'epic', 'lofi', 'none'
+                    'inspirational', 'epic', 'lofi', 'none',
                   ]
                       .map((s) => ChoiceChip(
                             label: Text(s),
                             selected: _musicStyle == s,
                             onSelected: (_) {
                               setSheet(() {});
-                              setState(() => _musicStyle = s);
+                              setState(
+                                  () => _musicStyle = s);
                             },
                           ))
                       .toList(),
                 ),
-
                 SizedBox(height: 8.h),
 
                 SwitchListTile(
@@ -1576,9 +1580,9 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                     setSheet(() {});
                     setState(() => _captionsEnabled = v);
                   },
-                  secondary: const Icon(Icons.closed_caption),
+                  secondary:
+                      const Icon(Icons.closed_caption),
                 ),
-
                 SizedBox(height: 16.h),
 
                 CustomButton(
@@ -1616,16 +1620,20 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
     );
   }
 
-  void _copyToClipboard(String text) {
-    // ignore: deprecated_member_use
-    // Use Clipboard.setData in real implementation
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('✅ Copied to clipboard!'),
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
-      ),
-    );
+  // FIX 2 — actually copies to clipboard now
+  Future<void> _copyToClipboard(String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('✅ Copied to clipboard!'),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10.r)),
+        ),
+      );
+    }
   }
 
   void _showSuccessSheet() {
@@ -1636,8 +1644,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
         padding: EdgeInsets.all(32.w),
         decoration: BoxDecoration(
           color: Theme.of(context).scaffoldBackgroundColor,
-          borderRadius:
-              BorderRadius.vertical(top: Radius.circular(24.r)),
+          borderRadius: BorderRadius.vertical(
+              top: Radius.circular(24.r)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1660,7 +1668,8 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
                     ?.copyWith(fontWeight: FontWeight.bold)),
             SizedBox(height: 8.h),
             Text(
-              'Your video is being created.\nCheck My Videos to track progress.',
+              'Your video is being created.\n'
+              'Check My Videos to track progress.',
               textAlign: TextAlign.center,
               style: Theme.of(context)
                   .textTheme
