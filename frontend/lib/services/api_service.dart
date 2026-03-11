@@ -703,7 +703,7 @@ class ApiService {
   void _log(String msg) =>
       developer.log(msg, name: 'ApiService');
 }
-Only one thing changed — the changePassword method was added right after updateProfile:
+
 Future<void> changePassword({
   required String currentPassword,
   required String newPassword,
