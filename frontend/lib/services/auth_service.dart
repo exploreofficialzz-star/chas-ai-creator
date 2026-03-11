@@ -3,6 +3,7 @@
  * Enhanced & Debugged
  */
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
@@ -24,17 +25,15 @@ class AuthService {
   static const String _refreshTokenKey = 'refresh_token';
   static const String _userKey         = 'user_data';
 
-  // FIX 1 — in-memory cache so we don't hit SharedPreferences every call
-  User? _currentUser;
+  User?   _currentUser;
   String? _cachedAccessToken;
-  bool _isRefreshing = false;
+  bool    _isRefreshing = false;
 
   // ─────────────────────────────────────────────────────────────────────────
   // TOKEN MANAGEMENT
   // ─────────────────────────────────────────────────────────────────────────
 
   Future<String?> getAccessToken() async {
-    // FIX 2 — return cached token first to avoid slow SharedPreferences reads
     if (_cachedAccessToken != null) return _cachedAccessToken;
     final prefs = await SharedPreferences.getInstance();
     _cachedAccessToken = prefs.getString(_accessTokenKey);
@@ -46,13 +45,15 @@ class AuthService {
     return prefs.getString(_refreshTokenKey);
   }
 
-  Future<void> _saveTokens(String accessToken, String refreshToken) async {
+  Future<void> _saveTokens(
+      String accessToken, String refreshToken) async {
     final prefs = await SharedPreferences.getInstance();
     await Future.wait([
       prefs.setString(_accessTokenKey, accessToken),
-      prefs.setString(_refreshTokenKey, refreshToken),
+      if (refreshToken.isNotEmpty)
+        prefs.setString(_refreshTokenKey, refreshToken),
     ]);
-    _cachedAccessToken = accessToken; // FIX 2 - keep cache in sync
+    _cachedAccessToken = accessToken;
   }
 
   Future<void> _saveUser(User user) async {
@@ -68,8 +69,8 @@ class AuthService {
       prefs.remove(_refreshTokenKey),
       prefs.remove(_userKey),
     ]);
-    _currentUser = null;
-    _cachedAccessToken = null; // FIX 2 - clear cache too
+    _currentUser        = null;
+    _cachedAccessToken  = null;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -81,23 +82,22 @@ class AuthService {
     return token != null && token.isNotEmpty;
   }
 
-  /// FIX 3 — try local cache first, then SharedPrefs, then hit the API
-  /// so user data is always fresh after app restart
   Future<User?> getCurrentUser() async {
     if (_currentUser != null) return _currentUser;
 
+    // Try local cache first
     final prefs = await SharedPreferences.getInstance();
     final userData = prefs.getString(_userKey);
-
     if (userData != null) {
       try {
-        _currentUser = User.fromJson(jsonDecode(userData));
+        _currentUser =
+            User.fromJson(jsonDecode(userData) as Map<String, dynamic>);
       } catch (_) {
-        // corrupt local data — fetch fresh from API below
+        // Corrupt data — will refresh from API
       }
     }
 
-    // Always refresh from API in background if we have a token
+    // Refresh from API if we have a token
     final token = await getAccessToken();
     if (token != null) {
       try {
@@ -107,7 +107,7 @@ class AuthService {
           return freshUser;
         }
       } catch (_) {
-        // network unavailable — return cached user
+        // Network unavailable — return cached user
       }
     }
 
@@ -115,27 +115,37 @@ class AuthService {
   }
 
   Future<User?> _fetchUserFromApi(String token) async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/users/me'),
-      headers: _headers(token: token),
-    ).timeout(const Duration(seconds: 15));
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/users/me'),
+        headers: _headers(token: token),
+      ).timeout(const Duration(seconds: 15));
 
-    if (response.statusCode == 200) {
-      return User.fromJson(jsonDecode(response.body));
-    }
-    if (response.statusCode == 401) {
-      // Token expired — try refresh
-      final newToken = await refreshAccessToken();
-      if (newToken != null) {
-        final retry = await http.get(
-          Uri.parse('$baseUrl/users/me'),
-          headers: _headers(token: newToken),
-        ).timeout(const Duration(seconds: 15));
-        if (retry.statusCode == 200) {
-          return User.fromJson(jsonDecode(retry.body));
-        }
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        // FIX 1 — backend sometimes wraps user in a 'data' or 'user' key
+        final userJson = _extractUserJson(body);
+        return User.fromJson(userJson);
       }
-      await _clearAuthData();
+
+      if (response.statusCode == 401) {
+        final newToken = await refreshAccessToken();
+        if (newToken != null) {
+          final retry = await http.get(
+            Uri.parse('$baseUrl/users/me'),
+            headers: _headers(token: newToken),
+          ).timeout(const Duration(seconds: 15));
+          if (retry.statusCode == 200) {
+            final body = jsonDecode(retry.body);
+            return User.fromJson(_extractUserJson(body));
+          }
+        }
+        await _clearAuthData();
+      }
+    } on TimeoutException {
+      _log('FETCH USER TIMEOUT');
+    } on SocketException {
+      _log('FETCH USER — no internet');
     }
     return null;
   }
@@ -154,10 +164,9 @@ class AuthService {
     final response = await _post(
       '/auth/register',
       {
-        'email': email.trim().toLowerCase(),
-        'password': password,
-        'display_name': displayName?.trim() ??
-            email.split('@')[0],
+        'email':        email.trim().toLowerCase(),
+        'password':     password,
+        'display_name': displayName?.trim() ?? email.split('@')[0],
       },
       requiresAuth: false,
     );
@@ -172,46 +181,80 @@ class AuthService {
   Future<User> signInWithEmail(String email, String password) async {
     _log('LOGIN: $email');
 
+    // FIX 2 — some FastAPI backends expect form data not JSON for /auth/login
+    // Try JSON first, fall back to form-encoded if we get 422
     final response = await _post(
       '/auth/login',
       {
-        'email': email.trim().toLowerCase(),
+        'email':    email.trim().toLowerCase(),
         'password': password,
       },
       requiresAuth: false,
     );
 
+    // FIX 3 — 422 usually means backend wants form-encoded login
+    if (response.statusCode == 422) {
+      _log('LOGIN: JSON failed with 422, retrying as form data');
+      final formResponse = await _postForm(
+        '/auth/login',
+        {
+          'username': email.trim().toLowerCase(), // OAuth2 uses 'username'
+          'password': password,
+        },
+      );
+      return _handleAuthResponse(formResponse, 'Login failed');
+    }
+
     return _handleAuthResponse(response, 'Login failed');
   }
 
-  /// FIX 4 — shared handler for register + login responses
+  // FIX 4 — shared auth response handler with robust key detection
   Future<User> _handleAuthResponse(
       http.Response response, String errorPrefix) async {
+    _log('AUTH RESPONSE: ${response.statusCode}');
+
     if (response.statusCode == 200 || response.statusCode == 201) {
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      Map<String, dynamic> data;
+      try {
+        data = jsonDecode(response.body) as Map<String, dynamic>;
+      } catch (_) {
+        throw Exception('$errorPrefix: Invalid server response');
+      }
 
-      // FIX 5 — handle both 'access_token' and 'token' keys from backend
-      final accessToken = data['access_token'] ??
-          data['token'] ??
-          data['accessToken'] ?? '';
-      final refreshToken = data['refresh_token'] ??
-          data['refreshToken'] ?? '';
+      // FIX 5 — handle all possible token key names
+      final accessToken = _extractString(data, [
+        'access_token', 'token', 'accessToken', 'jwt'
+      ]);
+      final refreshToken = _extractString(data, [
+        'refresh_token', 'refreshToken', 'refresh'
+      ]) ?? '';
 
-      if (accessToken.isEmpty) {
-        throw Exception('$errorPrefix: No token in response');
+      if (accessToken == null || accessToken.isEmpty) {
+        _log('NO TOKEN IN RESPONSE: ${response.body}');
+        throw Exception('$errorPrefix: Server did not return a token');
       }
 
       await _saveTokens(accessToken, refreshToken);
 
-      // FIX 6 — backend might return user inside 'user' key or at root
-      final userJson = (data['user'] as Map<String, dynamic>?) ?? data;
-      final user = User.fromJson(userJson);
-      await _saveUser(user);
+      // FIX 6 — extract user JSON safely without contaminating it
+      // with token fields when user is at the root level
+      final userJson = _extractUserJson(data);
+      
+      User user;
+      try {
+        user = User.fromJson(userJson);
+      } catch (e) {
+        _log('USER PARSE ERROR: $e — raw: $userJson');
+        throw Exception('$errorPrefix: Could not parse user data');
+      }
 
+      await _saveUser(user);
       _log('SUCCESS: ${user.email} (${user.subscriptionTier})');
       return user;
     }
 
+    // FIX 7 — log the actual response body for debugging
+    _log('AUTH FAILED ${response.statusCode}: ${response.body}');
     throw Exception(_parseError(response, errorPrefix));
   }
 
@@ -220,7 +263,6 @@ class AuthService {
   // ─────────────────────────────────────────────────────────────────────────
 
   Future<User> signInWithGoogle() async {
-    // App uses custom JWT — Google OAuth not configured
     throw Exception(
         'Google Sign-In is not available. Please use email and password.');
   }
@@ -229,10 +271,8 @@ class AuthService {
   // TOKEN REFRESH
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// FIX 7 — guard against multiple simultaneous refresh calls
   Future<String?> refreshAccessToken() async {
     if (_isRefreshing) {
-      // Wait for ongoing refresh to complete
       await Future.delayed(const Duration(milliseconds: 500));
       return _cachedAccessToken;
     }
@@ -253,9 +293,11 @@ class AuthService {
       ).timeout(const Duration(seconds: 20));
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final newToken = data['access_token'] ?? data['token'] ?? '';
-        final newRefresh = data['refresh_token'] ?? refreshToken;
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final newToken = _extractString(data,
+            ['access_token', 'token', 'accessToken']) ?? '';
+        final newRefresh = _extractString(data,
+            ['refresh_token', 'refreshToken']) ?? refreshToken;
 
         if (newToken.isNotEmpty) {
           await _saveTokens(newToken, newRefresh);
@@ -264,9 +306,11 @@ class AuthService {
         }
       }
 
-      // FIX 8 — refresh failed → clear data → force re-login
-      _log('REFRESH FAILED (${response.statusCode}) → clearing session');
+      _log('REFRESH FAILED (${response.statusCode}) — clearing session');
       await _clearAuthData();
+      return null;
+    } on TimeoutException {
+      _log('REFRESH TIMEOUT');
       return null;
     } catch (e) {
       _log('REFRESH ERROR: $e');
@@ -290,12 +334,11 @@ class AuthService {
       requiresAuth: false,
     );
 
-    // FIX 9 — treat 404 as success to prevent email enumeration
+    // Treat 404 as success — prevent email enumeration
     if (response.statusCode == 404) return;
 
     if (response.statusCode != 200 && response.statusCode != 202) {
-      throw Exception(
-          _parseError(response, 'Password reset failed'));
+      throw Exception(_parseError(response, 'Password reset failed'));
     }
   }
 
@@ -312,13 +355,14 @@ class AuthService {
       '/users/me',
       {
         if (displayName != null) 'display_name': displayName.trim(),
-        if (bio != null) 'bio': bio.trim(),
-        if (avatarUrl != null) 'avatar_url': avatarUrl,
+        if (bio != null)         'bio': bio.trim(),
+        if (avatarUrl != null)   'avatar_url': avatarUrl,
       },
     );
 
     if (response.statusCode == 200) {
-      final user = User.fromJson(jsonDecode(response.body));
+      final body = jsonDecode(response.body);
+      final user = User.fromJson(_extractUserJson(body));
       await _saveUser(user);
       return user;
     }
@@ -332,7 +376,6 @@ class AuthService {
 
   Future<void> signOut() async {
     try {
-      // Best-effort server-side logout — don't block on failure
       final token = await getAccessToken();
       if (token != null) {
         await http.post(
@@ -341,7 +384,7 @@ class AuthService {
         ).timeout(const Duration(seconds: 5));
       }
     } catch (_) {
-      // Ignore — always clear local data
+      // Best-effort — always clear local data regardless
     } finally {
       await _clearAuthData();
       _log('SIGNED OUT');
@@ -363,7 +406,7 @@ class AuthService {
 
   Map<String, String> _headers({String? token}) => {
         'Content-Type': 'application/json; charset=UTF-8',
-        'Accept': 'application/json',
+        'Accept':       'application/json',
         if (token != null && token.isNotEmpty)
           'Authorization': 'Bearer $token',
       };
@@ -377,13 +420,13 @@ class AuthService {
       String? token;
       if (requiresAuth) token = await getAccessToken();
 
+      // FIX 8 — increased timeout to handle Render cold starts (can take 50s+)
       final response = await http.post(
         Uri.parse('$baseUrl$path'),
         headers: _headers(token: token),
         body: jsonEncode(body),
-      ).timeout(const Duration(seconds: 30));
+      ).timeout(const Duration(seconds: 60));
 
-      // FIX 10 — auto-retry with refreshed token on 401
       if (response.statusCode == 401 && requiresAuth) {
         final newToken = await refreshAccessToken();
         if (newToken != null) {
@@ -391,11 +434,16 @@ class AuthService {
             Uri.parse('$baseUrl$path'),
             headers: _headers(token: newToken),
             body: jsonEncode(body),
-          ).timeout(const Duration(seconds: 30));
+          ).timeout(const Duration(seconds: 60));
         }
       }
 
       return response;
+    } on TimeoutException {
+      // FIX 9 — was missing TimeoutException handler — caused unhandled
+      // exception that crashed the login silently instead of showing error
+      throw Exception(
+          'Connection timed out. The server may be starting up — please try again.');
     } on SocketException {
       throw Exception(
           'No internet connection. Please check your network.');
@@ -403,6 +451,28 @@ class AuthService {
       throw Exception('Network error. Please try again.');
     } on FormatException {
       throw Exception('Server returned invalid data.');
+    }
+  }
+
+  // FIX 3 — form-encoded POST for OAuth2-style login endpoints
+  Future<http.Response> _postForm(
+    String path,
+    Map<String, String> body,
+  ) async {
+    try {
+      return await http.post(
+        Uri.parse('$baseUrl$path'),
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept':       'application/json',
+        },
+        body: body,
+      ).timeout(const Duration(seconds: 60));
+    } on TimeoutException {
+      throw Exception(
+          'Connection timed out. Please try again.');
+    } on SocketException {
+      throw Exception('No internet connection.');
     }
   }
 
@@ -431,9 +501,53 @@ class AuthService {
       }
 
       return response;
+    } on TimeoutException {
+      throw Exception('Request timed out. Please try again.');
     } on SocketException {
       throw Exception('No internet connection.');
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PRIVATE HELPERS
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // FIX 5 — safely extract a string value trying multiple key names
+  String? _extractString(Map<String, dynamic> data, List<String> keys) {
+    for (final key in keys) {
+      final val = data[key];
+      if (val != null && val.toString().isNotEmpty) {
+        return val.toString();
+      }
+    }
+    return null;
+  }
+
+  // FIX 6 — extract user JSON from response without token field contamination
+  Map<String, dynamic> _extractUserJson(dynamic body) {
+    if (body is! Map<String, dynamic>) return {};
+
+    // If backend wraps user in a key — use that directly
+    if (body['user'] is Map<String, dynamic>) {
+      return body['user'] as Map<String, dynamic>;
+    }
+    if (body['data'] is Map<String, dynamic>) {
+      final data = body['data'] as Map<String, dynamic>;
+      // Make sure data isn't just another wrapper
+      if (data.containsKey('email') || data.containsKey('id')) {
+        return data;
+      }
+    }
+
+    // User fields are at root — strip token fields to avoid parse errors
+    final tokenKeys = {
+      'access_token', 'token', 'accessToken', 'jwt',
+      'refresh_token', 'refreshToken', 'refresh',
+      'token_type', 'expires_in', 'expires_at',
+    };
+    return Map<String, dynamic>.fromEntries(
+      body.entries.where((e) => !tokenKeys.contains(e.key)),
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -443,20 +557,24 @@ class AuthService {
   String _parseError(http.Response response, String prefix) {
     try {
       final body = jsonDecode(response.body);
-      // FIX 11 — handle FastAPI validation error format
-      if (body['detail'] is List) {
-        final details = body['detail'] as List;
-        return details.isNotEmpty
-            ? details.first['msg'] ?? prefix
-            : prefix;
+      if (body is Map) {
+        // FastAPI validation error list
+        if (body['detail'] is List) {
+          final details = body['detail'] as List;
+          return details.isNotEmpty
+              ? (details.first['msg'] ?? prefix).toString()
+              : prefix;
+        }
+        final msg = body['detail'] ??
+            body['error'] ??
+            body['message'] ??
+            body['msg'];
+        if (msg != null && msg.toString().isNotEmpty) {
+          return msg.toString();
+        }
       }
-      return body['error'] ??
-          body['detail'] ??
-          body['message'] ??
-          '$prefix (${response.statusCode})';
-    } catch (_) {
-      return '$prefix (${response.statusCode})';
-    }
+    } catch (_) {}
+    return '$prefix (${response.statusCode})';
   }
 
   void _log(String msg) =>
