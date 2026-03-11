@@ -2,9 +2,9 @@
  * chAs AI Creator - App Configuration & Theme
  * FILE: lib/config/theme.dart
  *
- * FIXES:
- * 1. ColorScheme.background + onBackground deprecated in Material 3
- *    → replaced with surface/onSurface variants (no visual change)
+ * FIX — removed surfaceContainerHighest (added in Flutter 3.22+,
+ * not available in Flutter 3.19.0). Back to background/onBackground
+ * which are deprecated but fully functional in Flutter 3.19.
  */
 
 import 'package:flutter/foundation.dart';
@@ -16,20 +16,18 @@ import 'package:google_fonts/google_fonts.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 class AppConfig {
-  // Environment
   static const bool isDebug = kDebugMode;
   static bool get isAndroid =>
       defaultTargetPlatform == TargetPlatform.android;
   static bool get isIOS =>
       defaultTargetPlatform == TargetPlatform.iOS;
 
-  // API
   static const String baseUrl =
       'https://chas-ai-creator-2.onrender.com/api/v1';
 
   // Unity Ads — Nigeria Friendly
-  static const String unityGameIdAndroid    = '6060848';
-  static const String unityGameIdIOS        = '6060849';
+  static const String unityGameIdAndroid           = '6060848';
+  static const String unityGameIdIOS               = '6060849';
   static const String unityRewardedPlacementId     = 'rewardedVideo';
   static const String unityInterstitialPlacementId = 'interstitialVideo';
   static const String unityBannerPlacementId       = 'banner';
@@ -47,26 +45,22 @@ class AppConfig {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class AppTheme {
-  // Primary Colors
   static const Color primaryColor   = Color(0xFF6C63FF);
   static const Color secondaryColor = Color(0xFF00BFA6);
   static const Color accentColor    = Color(0xFFFF6584);
   static const Color darkColor      = Color(0xFF2D2D3A);
   static const Color lightColor     = Color(0xFFF8F9FA);
 
-  // Status Colors
   static const Color successColor = Color(0xFF4CAF50);
   static const Color errorColor   = Color(0xFFE53935);
   static const Color warningColor = Color(0xFFFFB300);
   static const Color infoColor    = Color(0xFF2196F3);
 
-  // Text Colors
   static const Color textPrimaryLight   = Color(0xFF2D2D3A);
   static const Color textSecondaryLight = Color(0xFF6B7280);
   static const Color textPrimaryDark    = Color(0xFFFFFFFF);
   static const Color textSecondaryDark  = Color(0xFFB0B0B0);
 
-  // Gradient
   static const LinearGradient primaryGradient = LinearGradient(
     colors: [primaryColor, Color(0xFF8B5CF6)],
     begin: Alignment.topLeft,
@@ -75,24 +69,26 @@ class AppTheme {
 
   // ── Dark Theme ────────────────────────────────────────────────────────────
 
+  // ignore: deprecated_member_use
   static ThemeData get darkTheme {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
       primaryColor: primaryColor,
       scaffoldBackgroundColor: darkColor,
+      cardColor: const Color(0xFF3D3D4A),
       colorScheme: const ColorScheme.dark(
         primary: primaryColor,
         secondary: secondaryColor,
-        // FIX 1 — background/onBackground deprecated in M3.
-        // surfaceContainerHighest replaces the card surface.
         surface: Color(0xFF3D3D4A),
-        surfaceContainerHighest: darkColor,
+        // ignore: deprecated_member_use
+        background: darkColor,
         onPrimary: Colors.white,
         onSecondary: Colors.white,
         onSurface: Colors.white,
+        // ignore: deprecated_member_use
+        onBackground: Colors.white,
       ),
-      cardColor: const Color(0xFF3D3D4A),
       textTheme:
           GoogleFonts.interTextTheme(ThemeData.dark().textTheme),
       appBarTheme: AppBarTheme(
@@ -138,23 +134,26 @@ class AppTheme {
 
   // ── Light Theme ───────────────────────────────────────────────────────────
 
+  // ignore: deprecated_member_use
   static ThemeData get lightTheme {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
       primaryColor: primaryColor,
       scaffoldBackgroundColor: lightColor,
+      cardColor: Colors.white,
       colorScheme: const ColorScheme.light(
         primary: primaryColor,
         secondary: secondaryColor,
-        // FIX 1 — background/onBackground deprecated in M3.
         surface: Colors.white,
-        surfaceContainerHighest: lightColor,
+        // ignore: deprecated_member_use
+        background: lightColor,
         onPrimary: Colors.white,
         onSecondary: Colors.white,
         onSurface: darkColor,
+        // ignore: deprecated_member_use
+        onBackground: darkColor,
       ),
-      cardColor: Colors.white,
       textTheme:
           GoogleFonts.interTextTheme(ThemeData.light().textTheme),
       appBarTheme: AppBarTheme(
