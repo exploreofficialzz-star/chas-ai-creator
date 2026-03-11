@@ -34,7 +34,7 @@ class ApiService {
       },
     ));
 
-    // ── Interceptor: inject token + auto-refresh ────────────────────────
+    // ── Interceptor: inject token + auto-refresh ──────────────────────
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
         final token = await _authService.getAccessToken();
@@ -54,22 +54,21 @@ class ApiService {
         _log('✗ ${error.response?.statusCode} '
             '${error.requestOptions.path}: ${error.message}');
 
-        // FIX 1 — auto-retry on 401 with refreshed token
+        // Auto-retry on 401 with refreshed token
         if (error.response?.statusCode == 401) {
           try {
             final newToken = await _authService.refreshAccessToken();
             if (newToken != null) {
               error.requestOptions.headers['Authorization'] =
                   'Bearer $newToken';
-              final response =
-                  await _dio.fetch(error.requestOptions);
+              final response = await _dio.fetch(error.requestOptions);
               return handler.resolve(response);
             }
           } catch (_) {}
           await _authService.signOut();
         }
 
-        // FIX 2 — auto-retry ONCE on 502/503 (Render cold start)
+        // Auto-retry ONCE on 502/503 (Render cold start)
         if ((error.response?.statusCode == 502 ||
                 error.response?.statusCode == 503) &&
             !(error.requestOptions.extra['retried'] == true)) {
@@ -92,13 +91,11 @@ class ApiService {
   // USER
   // ─────────────────────────────────────────────────────────────────────────
 
-  // FIX 3 — was hitting '/auth/me', correct endpoint is '/users/me'
   Future<User> getCurrentUser() async {
     final response = await _dio.get('/users/me');
     return User.fromJson(_asMap(response.data));
   }
 
-  // FIX 4 — was PUT '/users/profile', consistent with auth_service PATCH '/users/me'
   Future<User> updateProfile({
     String? displayName,
     String? bio,
@@ -112,17 +109,26 @@ class ApiService {
     return User.fromJson(_asMap(response.data));
   }
 
+  // FIX — added missing changePassword method that settings_screen.dart calls
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    await _dio.patch('/users/me/password', data: {
+      'current_password': currentPassword,
+      'new_password': newPassword,
+    });
+  }
+
   Future<UserSettings?> getUserSettings() async {
     try {
       final response = await _dio.get('/users/settings');
       final data = _asMap(response.data);
-      // FIX 5 — handle both {'settings': {...}} and flat response
       final settingsJson =
           data['settings'] as Map<String, dynamic>? ?? data;
       if (settingsJson.isEmpty) return null;
       return UserSettings.fromJson(settingsJson);
     } on DioException catch (e) {
-      // FIX 6 — 404 means no settings saved yet → return null (use defaults)
       if (e.response?.statusCode == 404) return null;
       rethrow;
     }
@@ -134,7 +140,6 @@ class ApiService {
       data: settings.toJson(),
     );
     final data = _asMap(response.data);
-    // FIX 7 — handle both {'settings': {...}} and flat response
     final settingsJson =
         data['settings'] as Map<String, dynamic>? ?? data;
     return UserSettings.fromJson(settingsJson);
@@ -144,7 +149,6 @@ class ApiService {
     try {
       final response = await _dio.get('/users/usage');
       final data = _asMap(response.data);
-      // FIX 8 — normalize all possible key names from backend
       return {
         'total_videos_generated':
             data['total_videos_generated'] ??
@@ -162,15 +166,12 @@ class ApiService {
             data['videos_this_month'] ??
             data['month_count'] ??
             data['videosThisMonth'] ?? 0,
-        'credits':
-            data['credits'] ?? 0,
+        'credits': data['credits'] ?? 0,
         'daily_limit':
-            data['daily_limit'] ??
-            data['limit'] ?? 2,
+            data['daily_limit'] ?? data['limit'] ?? 2,
         ...data,
       };
     } catch (_) {
-      // FIX 9 — return safe defaults on failure so dashboard never crashes
       return {
         'total_videos_generated': 0,
         'remaining_daily_videos': 0,
@@ -235,8 +236,8 @@ class ApiService {
         'voice_style': voiceStyle,
         'target_platforms': targetPlatforms,
       },
-      // FIX 10 — video generation can take a long time
-      options: Options(receiveTimeout: const Duration(seconds: 300)),
+      options:
+          Options(receiveTimeout: const Duration(seconds: 300)),
     );
     return _asMap(response.data);
   }
@@ -246,7 +247,6 @@ class ApiService {
     int page = 1,
     int limit = 20,
   }) async {
-    // FIX 11 — try both endpoint patterns (some backends use /videos/)
     Response response;
     try {
       response = await _dio.get('/videos/', queryParameters: {
@@ -258,8 +258,8 @@ class ApiService {
     } on DioException catch (e) {
       if (e.response?.statusCode == 404 ||
           e.response?.statusCode == 405) {
-        // Fallback to /videos/list
-        response = await _dio.get('/videos/list', queryParameters: {
+        response =
+            await _dio.get('/videos/list', queryParameters: {
           if (status != null) 'status': status,
           'page': page,
           'limit': limit,
@@ -270,8 +270,6 @@ class ApiService {
     }
 
     final data = _asMap(response.data);
-
-    // FIX 12 — normalize all possible video list response shapes
     final videos = (data['videos'] ??
             data['data'] ??
             data['items'] ??
@@ -297,7 +295,8 @@ class ApiService {
     return _asMap(response.data);
   }
 
-  Future<Map<String, dynamic>> getVideoScenes(String videoId) async {
+  Future<Map<String, dynamic>> getVideoScenes(
+      String videoId) async {
     final response = await _dio.get('/videos/$videoId/scenes');
     return _asMap(response.data);
   }
@@ -306,7 +305,8 @@ class ApiService {
     await _dio.delete('/videos/$videoId');
   }
 
-  Future<Map<String, dynamic>> regenerateVideo(String videoId) async {
+  Future<Map<String, dynamic>> regenerateVideo(
+      String videoId) async {
     final response =
         await _dio.post('/videos/$videoId/regenerate');
     return _asMap(response.data);
@@ -598,7 +598,6 @@ class ApiService {
     );
 
     final data = _asMap(response.data);
-    // FIX 13 — handle 'url', 'file_url', 'secure_url' (Cloudinary)
     final url = data['url'] ??
         data['file_url'] ??
         data['secure_url'] ??
@@ -616,7 +615,6 @@ class ApiService {
 
   String handleError(dynamic error) {
     if (error is DioException) {
-      // Timeout / network errors
       switch (error.type) {
         case DioExceptionType.connectionTimeout:
         case DioExceptionType.sendTimeout:
@@ -631,15 +629,13 @@ class ApiService {
 
       final response = error.response;
       if (response != null) {
-        // FIX 14 — parse FastAPI validation error list format
         final data = response.data;
         if (data is Map) {
           final detail = data['detail'];
           if (detail is List && detail.isNotEmpty) {
             final first = detail.first;
             if (first is Map) {
-              return first['msg']?.toString() ??
-                  'Validation error';
+              return first['msg']?.toString() ?? 'Validation error';
             }
           }
           final msg = data['detail'] ??
@@ -651,17 +647,17 @@ class ApiService {
         }
 
         return switch (response.statusCode) {
-          400  => '❌ Invalid request. Please check your inputs.',
-          401  => '🔒 Session expired. Please log in again.',
-          403  => '🚫 You don\'t have permission to do this.',
-          404  => '🔍 Not found. It may have been deleted.',
-          409  => '⚠️ This already exists.',
-          422  => '❌ Invalid data. Please check your inputs.',
-          429  => '⏳ Too many requests. Please wait a moment.',
-          500  => '🔧 Server error. Please try again.',
-          502  => '🔧 Server is starting up. Please retry in 30s.',
-          503  => '🔧 Service unavailable. Please try again soon.',
-          _    => '❌ Something went wrong (${response.statusCode}).',
+          400 => '❌ Invalid request. Please check your inputs.',
+          401 => '🔒 Session expired. Please log in again.',
+          403 => '🚫 You don\'t have permission to do this.',
+          404 => '🔍 Not found. It may have been deleted.',
+          409 => '⚠️ This already exists.',
+          422 => '❌ Invalid data. Please check your inputs.',
+          429 => '⏳ Too many requests. Please wait a moment.',
+          500 => '🔧 Server error. Please try again.',
+          502 => '🔧 Server is starting up. Please retry in 30s.',
+          503 => '🔧 Service unavailable. Please try again soon.',
+          _   => '❌ Something went wrong (${response.statusCode}).',
         };
       }
       return '📡 Network error. Please check your connection.';
@@ -698,15 +694,22 @@ class ApiService {
   // HELPERS
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// FIX 15 — safely cast any response.data to Map<String, dynamic>
   Map<String, dynamic> _asMap(dynamic data) {
     if (data is Map<String, dynamic>) return data;
-    if (data is Map) {
-      return Map<String, dynamic>.from(data);
-    }
+    if (data is Map) return Map<String, dynamic>.from(data);
     return {};
   }
 
   void _log(String msg) =>
       developer.log(msg, name: 'ApiService');
+}
+Only one thing changed — the changePassword method was added right after updateProfile:
+Future<void> changePassword({
+  required String currentPassword,
+  required String newPassword,
+}) async {
+  await _dio.patch('/users/me/password', data: {
+    'current_password': currentPassword,
+    'new_password': newPassword,
+  });
 }
