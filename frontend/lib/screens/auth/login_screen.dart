@@ -30,6 +30,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _submit() {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (_isLoading) return; // FIX 1 — prevent double-tap submissions
 
     setState(() => _isLoading = true);
 
@@ -53,9 +54,13 @@ class _LoginScreenState extends State<LoginScreen> {
   void _toggleMode() {
     setState(() {
       _isLogin = !_isLogin;
-      // FIX 1 - clear errors when switching between login/register
+      _isLoading = false;
       _formKey.currentState?.reset();
+      _emailController.clear();
+      _passwordController.clear();
     });
+    // FIX 2 — clear any lingering snackbars when switching modes
+    ScaffoldMessenger.of(context).clearSnackBars();
   }
 
   @override
@@ -64,35 +69,49 @@ class _LoginScreenState extends State<LoginScreen> {
       body: BlocListener<AuthBloc, AuthState>(
         listener: (context, state) {
           if (state is AuthLoading) {
-            // FIX 2 - sync loading state with bloc
             if (!_isLoading) setState(() => _isLoading = true);
           } else if (state is AuthError) {
-            setState(() => _isLoading = false);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(state.message),
-                backgroundColor: Colors.red.shade700,
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12.r),
+            if (mounted) {
+              setState(() => _isLoading = false);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(state.message),
+                  backgroundColor: Colors.red.shade700,
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12.r),
+                  ),
+                  margin: EdgeInsets.all(16.w),
+                  duration: const Duration(seconds: 4),
                 ),
-                margin: EdgeInsets.all(16.w),
-                duration: const Duration(seconds: 4),
-              ),
-            );
+              );
+            }
           } else if (state is Authenticated) {
-            setState(() => _isLoading = false);
-            // FIX 3 - KEY FIX: use addPostFrameCallback so navigation fires
-            // AFTER the current build cycle completes — this stops the blank screen bug
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) {
-                Navigator.of(context).pushReplacementNamed('/home');
-              }
-            });
+            // FIX 3 — THE CORE FIX: do NOT call Navigator here.
+            // app.dart's BlocBuilder watches AuthBloc and automatically
+            // replaces the widget tree with HomeScreen when Authenticated
+            // is emitted. Any Navigator call from here pushes a second
+            // route on top of that and causes a blank/broken screen.
+            if (mounted) setState(() => _isLoading = false);
+          } else if (state is PasswordResetSent) {
+            if (mounted) {
+              setState(() => _isLoading = false);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Text(
+                      '✅ Password reset link sent! Check your email.'),
+                  backgroundColor: Colors.green.shade700,
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12.r),
+                  ),
+                  margin: EdgeInsets.all(16.w),
+                ),
+              );
+            }
           }
         },
         child: Container(
-          // FIX 4 - wrap in gradient container so background looks good
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
@@ -107,6 +126,7 @@ class _LoginScreenState extends State<LoginScreen> {
           child: SafeArea(
             child: Column(
               children: [
+                // ── Scrollable body ──────────────────────────────────
                 Expanded(
                   child: SingleChildScrollView(
                     padding: EdgeInsets.symmetric(horizontal: 28.w),
@@ -132,7 +152,8 @@ class _LoginScreenState extends State<LoginScreen> {
                             borderRadius: BorderRadius.circular(28.r),
                             boxShadow: [
                               BoxShadow(
-                                color: AppTheme.primaryColor.withOpacity(0.3),
+                                color: AppTheme.primaryColor
+                                    .withOpacity(0.3),
                                 blurRadius: 20,
                                 offset: const Offset(0, 10),
                               ),
@@ -147,7 +168,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         SizedBox(height: 32.h),
 
-                        // App Name
+                        // App name
                         Text(
                           'chAs AI Creator',
                           style: Theme.of(context)
@@ -161,11 +182,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         SizedBox(height: 8.h),
 
-                        // Title
+                        // Login / register title
                         AnimatedSwitcher(
                           duration: const Duration(milliseconds: 300),
                           child: Text(
-                            _isLogin ? 'Welcome Back!' : 'Create Account',
+                            _isLogin
+                                ? 'Welcome Back!'
+                                : 'Create Account',
                             key: ValueKey(_isLogin),
                             style: Theme.of(context)
                                 .textTheme
@@ -186,22 +209,25 @@ class _LoginScreenState extends State<LoginScreen> {
                           _isLogin
                               ? 'Sign in to continue creating amazing AI videos'
                               : 'Start your journey to viral video content',
-                          style:
-                              Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: Colors.white.withOpacity(0.7),
-                                    fontSize: 14.sp,
-                                  ),
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(
+                                color: Colors.white.withOpacity(0.7),
+                                fontSize: 14.sp,
+                              ),
                           textAlign: TextAlign.center,
                         ),
 
                         SizedBox(height: 40.h),
 
-                        // Form
+                        // ── Form card ──────────────────────────────
                         Container(
                           padding: EdgeInsets.all(24.w),
                           decoration: BoxDecoration(
                             color: Colors.white.withOpacity(0.05),
-                            borderRadius: BorderRadius.circular(20.r),
+                            borderRadius:
+                                BorderRadius.circular(20.r),
                             border: Border.all(
                               color: Colors.white.withOpacity(0.1),
                             ),
@@ -210,13 +236,14 @@ class _LoginScreenState extends State<LoginScreen> {
                             key: _formKey,
                             child: Column(
                               children: [
+                                // Email
                                 CustomTextField(
                                   controller: _emailController,
                                   label: 'Email Address',
                                   hint: 'name@example.com',
-                                  keyboardType: TextInputType.emailAddress,
+                                  keyboardType:
+                                      TextInputType.emailAddress,
                                   prefixIcon: Icons.email_outlined,
-                                  // FIX 5 - disable fields while loading
                                   enabled: !_isLoading,
                                   validator: (value) {
                                     if (value?.isEmpty ?? true) {
@@ -232,6 +259,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                                 SizedBox(height: 20.h),
 
+                                // Password
                                 CustomTextField(
                                   controller: _passwordController,
                                   label: 'Password',
@@ -239,23 +267,26 @@ class _LoginScreenState extends State<LoginScreen> {
                                       ? 'Your password'
                                       : 'Min 8 characters',
                                   obscureText: true,
-                                  prefixIcon: Icons.lock_outline_rounded,
+                                  prefixIcon:
+                                      Icons.lock_outline_rounded,
                                   enabled: !_isLoading,
                                   validator: (value) {
                                     if (value?.isEmpty ?? true) {
                                       return 'Please enter your password';
                                     }
-                                    if (!_isLogin && value!.length < 8) {
+                                    if (!_isLogin &&
+                                        value!.length < 8) {
                                       return 'Password must be at least 8 characters';
                                     }
-                                    if (_isLogin && value!.length < 6) {
+                                    if (_isLogin &&
+                                        value!.length < 6) {
                                       return 'Password too short';
                                     }
                                     return null;
                                   },
                                 ),
 
-                                // FIX 6 - show forgot password on login mode
+                                // Forgot password (login only)
                                 if (_isLogin) ...[
                                   SizedBox(height: 8.h),
                                   Align(
@@ -281,16 +312,18 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         SizedBox(height: 24.h),
 
-                        // Submit Button
+                        // Submit button
                         CustomButton(
-                          text: _isLogin ? 'Sign In' : 'Create Account',
+                          text: _isLogin
+                              ? 'Sign In'
+                              : 'Create Account',
                           onPressed: _isLoading ? null : _submit,
                           isLoading: _isLoading,
                         ),
 
                         SizedBox(height: 20.h),
 
-                        // Toggle Mode
+                        // Toggle login / register
                         TextButton(
                           onPressed: _isLoading ? null : _toggleMode,
                           style: TextButton.styleFrom(
@@ -308,7 +341,9 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               children: [
                                 TextSpan(
-                                  text: _isLogin ? 'Sign Up' : 'Sign In',
+                                  text: _isLogin
+                                      ? 'Sign Up'
+                                      : 'Sign In',
                                   style: TextStyle(
                                     color: AppTheme.primaryColor,
                                     fontWeight: FontWeight.bold,
@@ -326,7 +361,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
 
-                // Footer
+                // ── Footer ───────────────────────────────────────────
                 Container(
                   padding: EdgeInsets.symmetric(vertical: 20.h),
                   decoration: BoxDecoration(
@@ -342,7 +377,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: Column(
                     children: [
                       Container(
-                        margin: EdgeInsets.symmetric(horizontal: 40.w),
+                        margin:
+                            EdgeInsets.symmetric(horizontal: 40.w),
                         height: 1,
                         color: Colors.white.withOpacity(0.1),
                       ),
@@ -398,48 +434,57 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  // FIX 7 - implemented forgot password dialog
+  // ─────────────────────────────────────────────────────────────────────────
+  // FORGOT PASSWORD
+  // ─────────────────────────────────────────────────────────────────────────
+
   void _showForgotPassword() {
-    final emailController = TextEditingController(
-      text: _emailController.text,
+    final emailCtrl = TextEditingController(
+      text: _emailController.text.trim(),
     );
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16.r)),
         title: const Text('Reset Password'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text(
-              'Enter your email and we will send you a reset link.',
-            ),
+                'Enter your email and we will send you a reset link.'),
             SizedBox(height: 16.h),
             TextField(
-              controller: emailController,
+              controller: emailCtrl,
               keyboardType: TextInputType.emailAddress,
-              decoration: const InputDecoration(
+              autofocus: true,
+              decoration: InputDecoration(
                 labelText: 'Email Address',
-                border: OutlineInputBorder(),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10.r)),
+                prefixIcon: const Icon(Icons.email_outlined),
               ),
             ),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogCtx),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
             onPressed: () {
-              Navigator.pop(context);
-              context.read<AuthBloc>().add(
-                    ResetPassword(email: emailController.text.trim()),
-                  );
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('✅ Password reset link sent to your email!'),
-                ),
-              );
+              final email = emailCtrl.text.trim();
+              if (email.isEmpty || !email.contains('@')) {
+                return; // FIX 4 — basic guard before dispatching
+              }
+              Navigator.pop(dialogCtx);
+              // FIX 5 — dispatch to AuthBloc; PasswordResetSent state
+              // is handled in the BlocListener above with a snackbar
+              context
+                  .read<AuthBloc>()
+                  .add(ResetPassword(email: email));
             },
             child: const Text('Send Link'),
           ),
