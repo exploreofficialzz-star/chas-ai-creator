@@ -1,8 +1,7 @@
 /*
  * chAs AI Creator - Main Application Entry
- * Created by: chAs
- * Copyright (c) 2024 chAs. All rights reserved.
- * 
+ * FILE: lib/main.dart
+ *
  * AI-powered video content automation platform
  * Nigeria Friendly Version - No Firebase, Uses Custom JWT & Unity Ads
  */
@@ -21,25 +20,46 @@ import 'services/auth_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // NOTE: Firebase initialization removed - Nigeria Friendly Version
-  // Using Custom JWT Authentication instead of Firebase Auth
-  
-  // Initialize error handling (without Firebase Crashlytics)
+
+  // Error handling (no Firebase Crashlytics — Nigeria friendly)
   FlutterError.onError = (errorDetails) {
     if (kDebugMode) {
       print('Flutter Error: ${errorDetails.exception}');
     }
   };
-  
+
   PlatformDispatcher.instance.onError = (error, stack) {
     if (kDebugMode) {
       print('Platform Error: $error');
     }
     return true;
   };
-  
-  // Initialize Unity Ads (Nigeria Friendly - replaces Google AdMob)
+
+  // Lock to portrait
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+
+  // FIX 1 — use light status bar icons so they are visible on the
+  // dark splash/login backgrounds. Was Brightness.dark which made
+  // the status bar icons invisible on dark screens.
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+      systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarIconBrightness: Brightness.light,
+    ),
+  );
+
+  // FIX 2 — Ad init moved AFTER runApp so it never delays app startup.
+  // Previously it awaited AdService.initialize() before runApp, meaning
+  // the user saw a blank screen for however long Unity Ads took to init.
+  // Now the app renders immediately and ads init in the background.
+  runApp(const ChAsAICreatorApp());
+
+  // Init ads after first frame — non-blocking
   try {
     await AdService().initialize();
   } catch (e) {
@@ -47,24 +67,6 @@ void main() async {
       print('Ad Service Init Error: $e');
     }
   }
-  
-  // Set preferred orientations
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
-  
-  // Set system UI overlay style
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.dark,
-      systemNavigationBarColor: Colors.white,
-      systemNavigationBarIconBrightness: Brightness.dark,
-    ),
-  );
-  
-  runApp(const ChAsAICreatorApp());
 }
 
 class ChAsAICreatorApp extends StatelessWidget {
@@ -80,10 +82,12 @@ class ChAsAICreatorApp extends StatelessWidget {
         return MultiBlocProvider(
           providers: [
             BlocProvider(
-              // FIX 1 - Removed ..add(AppStarted()) from here
-              // app.dart already fires AppStarted() in initState
-              // firing it twice caused double auth check and loading flicker
-              create: (context) => AuthBloc(authService: AuthService()),
+              // AppStarted() is dispatched from app.dart initState
+              // AFTER onboarding prefs are loaded — not here.
+              // Dispatching here AND in app.dart caused a double auth
+              // check and an AuthLoading flicker on every cold start.
+              create: (context) =>
+                  AuthBloc(authService: AuthService()),
             ),
           ],
           child: MaterialApp(
