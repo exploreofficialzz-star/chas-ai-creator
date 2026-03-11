@@ -1,6 +1,6 @@
 /*
  * chAs AI Creator - Auth Service
- * Enhanced & Debugged
+ * FILE: lib/services/auth_service.dart
  */
 
 import 'dart:async';
@@ -69,8 +69,8 @@ class AuthService {
       prefs.remove(_refreshTokenKey),
       prefs.remove(_userKey),
     ]);
-    _currentUser        = null;
-    _cachedAccessToken  = null;
+    _currentUser       = null;
+    _cachedAccessToken = null;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -90,10 +90,10 @@ class AuthService {
     final userData = prefs.getString(_userKey);
     if (userData != null) {
       try {
-        _currentUser =
-            User.fromJson(jsonDecode(userData) as Map<String, dynamic>);
+        _currentUser = User.fromJson(
+            jsonDecode(userData) as Map<String, dynamic>);
       } catch (_) {
-        // Corrupt data — will refresh from API
+        // Corrupt cache — will refresh from API
       }
     }
 
@@ -123,9 +123,7 @@ class AuthService {
 
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body);
-        // FIX 1 — backend sometimes wraps user in a 'data' or 'user' key
-        final userJson = _extractUserJson(body);
-        return User.fromJson(userJson);
+        return User.fromJson(_extractUserJson(body));
       }
 
       if (response.statusCode == 401) {
@@ -160,17 +158,16 @@ class AuthService {
     String? displayName,
   }) async {
     _log('REGISTER: $email');
-
     final response = await _post(
       '/auth/register',
       {
         'email':        email.trim().toLowerCase(),
         'password':     password,
-        'display_name': displayName?.trim() ?? email.split('@')[0],
+        'display_name': displayName?.trim() ??
+            email.split('@')[0],
       },
       requiresAuth: false,
     );
-
     return _handleAuthResponse(response, 'Registration failed');
   }
 
@@ -178,11 +175,11 @@ class AuthService {
   // LOGIN
   // ─────────────────────────────────────────────────────────────────────────
 
-  Future<User> signInWithEmail(String email, String password) async {
+  Future<User> signInWithEmail(
+      String email, String password) async {
     _log('LOGIN: $email');
 
-    // FIX 2 — some FastAPI backends expect form data not JSON for /auth/login
-    // Try JSON first, fall back to form-encoded if we get 422
+    // Try JSON first
     final response = await _post(
       '/auth/login',
       {
@@ -192,13 +189,13 @@ class AuthService {
       requiresAuth: false,
     );
 
-    // FIX 3 — 422 usually means backend wants form-encoded login
+    // 422 means backend wants form-encoded (OAuth2 standard)
     if (response.statusCode == 422) {
-      _log('LOGIN: JSON failed with 422, retrying as form data');
+      _log('LOGIN: retrying as form-encoded (OAuth2)');
       final formResponse = await _postForm(
         '/auth/login',
         {
-          'username': email.trim().toLowerCase(), // OAuth2 uses 'username'
+          'username': email.trim().toLowerCase(),
           'password': password,
         },
       );
@@ -208,12 +205,12 @@ class AuthService {
     return _handleAuthResponse(response, 'Login failed');
   }
 
-  // FIX 4 — shared auth response handler with robust key detection
   Future<User> _handleAuthResponse(
       http.Response response, String errorPrefix) async {
     _log('AUTH RESPONSE: ${response.statusCode}');
 
-    if (response.statusCode == 200 || response.statusCode == 201) {
+    if (response.statusCode == 200 ||
+        response.statusCode == 201) {
       Map<String, dynamic> data;
       try {
         data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -221,7 +218,6 @@ class AuthService {
         throw Exception('$errorPrefix: Invalid server response');
       }
 
-      // FIX 5 — handle all possible token key names
       final accessToken = _extractString(data, [
         'access_token', 'token', 'accessToken', 'jwt'
       ]);
@@ -231,21 +227,23 @@ class AuthService {
 
       if (accessToken == null || accessToken.isEmpty) {
         _log('NO TOKEN IN RESPONSE: ${response.body}');
-        throw Exception('$errorPrefix: Server did not return a token');
+        throw Exception(
+            '$errorPrefix: Server did not return a token');
       }
 
+      // FIX — save tokens BEFORE returning so they are available
+      // immediately when DashboardScreen's postFrameCallback fires
       await _saveTokens(accessToken, refreshToken);
 
-      // FIX 6 — extract user JSON safely without contaminating it
-      // with token fields when user is at the root level
       final userJson = _extractUserJson(data);
-      
+
       User user;
       try {
         user = User.fromJson(userJson);
       } catch (e) {
         _log('USER PARSE ERROR: $e — raw: $userJson');
-        throw Exception('$errorPrefix: Could not parse user data');
+        throw Exception(
+            '$errorPrefix: Could not parse user data');
       }
 
       await _saveUser(user);
@@ -253,7 +251,6 @@ class AuthService {
       return user;
     }
 
-    // FIX 7 — log the actual response body for debugging
     _log('AUTH FAILED ${response.statusCode}: ${response.body}');
     throw Exception(_parseError(response, errorPrefix));
   }
@@ -293,11 +290,14 @@ class AuthService {
       ).timeout(const Duration(seconds: 20));
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final newToken = _extractString(data,
-            ['access_token', 'token', 'accessToken']) ?? '';
-        final newRefresh = _extractString(data,
-            ['refresh_token', 'refreshToken']) ?? refreshToken;
+        final data =
+            jsonDecode(response.body) as Map<String, dynamic>;
+        final newToken = _extractString(
+                data, ['access_token', 'token', 'accessToken']) ??
+            '';
+        final newRefresh =
+            _extractString(data, ['refresh_token', 'refreshToken']) ??
+                refreshToken;
 
         if (newToken.isNotEmpty) {
           await _saveTokens(newToken, newRefresh);
@@ -306,7 +306,7 @@ class AuthService {
         }
       }
 
-      _log('REFRESH FAILED (${response.statusCode}) — clearing session');
+      _log('REFRESH FAILED — clearing session');
       await _clearAuthData();
       return null;
     } on TimeoutException {
@@ -327,18 +327,17 @@ class AuthService {
 
   Future<void> resetPassword(String email) async {
     _log('RESET PASSWORD: $email');
-
     final response = await _post(
       '/auth/forgot-password',
       {'email': email.trim().toLowerCase()},
       requiresAuth: false,
     );
-
     // Treat 404 as success — prevent email enumeration
     if (response.statusCode == 404) return;
-
-    if (response.statusCode != 200 && response.statusCode != 202) {
-      throw Exception(_parseError(response, 'Password reset failed'));
+    if (response.statusCode != 200 &&
+        response.statusCode != 202) {
+      throw Exception(
+          _parseError(response, 'Password reset failed'));
     }
   }
 
@@ -354,7 +353,8 @@ class AuthService {
     final response = await _patch(
       '/users/me',
       {
-        if (displayName != null) 'display_name': displayName.trim(),
+        if (displayName != null)
+          'display_name': displayName.trim(),
         if (bio != null)         'bio': bio.trim(),
         if (avatarUrl != null)   'avatar_url': avatarUrl,
       },
@@ -366,8 +366,8 @@ class AuthService {
       await _saveUser(user);
       return user;
     }
-
-    throw Exception(_parseError(response, 'Profile update failed'));
+    throw Exception(
+        _parseError(response, 'Profile update failed'));
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -384,7 +384,7 @@ class AuthService {
         ).timeout(const Duration(seconds: 5));
       }
     } catch (_) {
-      // Best-effort — always clear local data regardless
+      // Best-effort — always clear local data
     } finally {
       await _clearAuthData();
       _log('SIGNED OUT');
@@ -401,7 +401,7 @@ class AuthService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // PRIVATE HTTP HELPERS
+  // HTTP HELPERS
   // ─────────────────────────────────────────────────────────────────────────
 
   Map<String, String> _headers({String? token}) => {
@@ -420,7 +420,7 @@ class AuthService {
       String? token;
       if (requiresAuth) token = await getAccessToken();
 
-      // FIX 8 — increased timeout to handle Render cold starts (can take 50s+)
+      // 60s timeout handles Render cold starts (can be 50s+)
       final response = await http.post(
         Uri.parse('$baseUrl$path'),
         headers: _headers(token: token),
@@ -440,10 +440,8 @@ class AuthService {
 
       return response;
     } on TimeoutException {
-      // FIX 9 — was missing TimeoutException handler — caused unhandled
-      // exception that crashed the login silently instead of showing error
       throw Exception(
-          'Connection timed out. The server may be starting up — please try again.');
+          'Server is warming up — please wait a moment and try again.');
     } on SocketException {
       throw Exception(
           'No internet connection. Please check your network.');
@@ -454,7 +452,6 @@ class AuthService {
     }
   }
 
-  // FIX 3 — form-encoded POST for OAuth2-style login endpoints
   Future<http.Response> _postForm(
     String path,
     Map<String, String> body,
@@ -463,14 +460,15 @@ class AuthService {
       return await http.post(
         Uri.parse('$baseUrl$path'),
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept':       'application/json',
+          'Content-Type':
+              'application/x-www-form-urlencoded',
+          'Accept': 'application/json',
         },
         body: body,
       ).timeout(const Duration(seconds: 60));
     } on TimeoutException {
       throw Exception(
-          'Connection timed out. Please try again.');
+          'Server is warming up — please try again.');
     } on SocketException {
       throw Exception('No internet connection.');
     }
@@ -482,7 +480,6 @@ class AuthService {
   ) async {
     try {
       var token = await getAccessToken();
-
       final response = await http.patch(
         Uri.parse('$baseUrl$path'),
         headers: _headers(token: token),
@@ -509,11 +506,11 @@ class AuthService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // PRIVATE HELPERS
+  // PARSING HELPERS
   // ─────────────────────────────────────────────────────────────────────────
 
-  // FIX 5 — safely extract a string value trying multiple key names
-  String? _extractString(Map<String, dynamic> data, List<String> keys) {
+  String? _extractString(
+      Map<String, dynamic> data, List<String> keys) {
     for (final key in keys) {
       final val = data[key];
       if (val != null && val.toString().isNotEmpty) {
@@ -523,42 +520,36 @@ class AuthService {
     return null;
   }
 
-  // FIX 6 — extract user JSON from response without token field contamination
   Map<String, dynamic> _extractUserJson(dynamic body) {
     if (body is! Map<String, dynamic>) return {};
 
-    // If backend wraps user in a key — use that directly
     if (body['user'] is Map<String, dynamic>) {
       return body['user'] as Map<String, dynamic>;
     }
     if (body['data'] is Map<String, dynamic>) {
       final data = body['data'] as Map<String, dynamic>;
-      // Make sure data isn't just another wrapper
-      if (data.containsKey('email') || data.containsKey('id')) {
+      if (data.containsKey('email') ||
+          data.containsKey('id')) {
         return data;
       }
     }
 
-    // User fields are at root — strip token fields to avoid parse errors
-    final tokenKeys = {
+    // User fields at root — strip token fields
+    const tokenKeys = {
       'access_token', 'token', 'accessToken', 'jwt',
       'refresh_token', 'refreshToken', 'refresh',
       'token_type', 'expires_in', 'expires_at',
     };
     return Map<String, dynamic>.fromEntries(
-      body.entries.where((e) => !tokenKeys.contains(e.key)),
+      body.entries
+          .where((e) => !tokenKeys.contains(e.key)),
     );
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // ERROR PARSING
-  // ─────────────────────────────────────────────────────────────────────────
 
   String _parseError(http.Response response, String prefix) {
     try {
       final body = jsonDecode(response.body);
       if (body is Map) {
-        // FastAPI validation error list
         if (body['detail'] is List) {
           final details = body['detail'] as List;
           return details.isNotEmpty
