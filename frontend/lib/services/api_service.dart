@@ -34,7 +34,6 @@ class ApiService {
       },
     ));
 
-    // ── Interceptor: inject token + auto-refresh ──────────────────────
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
         final token = await _authService.getAccessToken();
@@ -54,7 +53,6 @@ class ApiService {
         _log('✗ ${error.response?.statusCode} '
             '${error.requestOptions.path}: ${error.message}');
 
-        // Auto-retry on 401 with refreshed token
         if (error.response?.statusCode == 401) {
           try {
             final newToken = await _authService.refreshAccessToken();
@@ -68,7 +66,6 @@ class ApiService {
           await _authService.signOut();
         }
 
-        // Auto-retry ONCE on 502/503 (Render cold start)
         if ((error.response?.statusCode == 502 ||
                 error.response?.statusCode == 503) &&
             !(error.requestOptions.extra['retried'] == true)) {
@@ -109,7 +106,7 @@ class ApiService {
     return User.fromJson(_asMap(response.data));
   }
 
-  // FIX — added missing changePassword method that settings_screen.dart calls
+  // FIX — moved inside class so _dio is accessible
   Future<void> changePassword({
     required String currentPassword,
     required String newPassword,
@@ -702,14 +699,5 @@ class ApiService {
 
   void _log(String msg) =>
       developer.log(msg, name: 'ApiService');
-}
 
-Future<void> changePassword({
-  required String currentPassword,
-  required String newPassword,
-}) async {
-  await _dio.patch('/users/me/password', data: {
-    'current_password': currentPassword,
-    'new_password': newPassword,
-  });
-}
+} // ← ApiService class ends here
