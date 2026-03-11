@@ -1,3 +1,16 @@
+/*
+ * chAs AI Creator - Login Screen
+ * FILE: lib/screens/auth/login_screen.dart
+ *
+ * This screen now stays mounted during the ENTIRE login attempt
+ * because app.dart's buildWhen no longer swaps it out for SplashScreen
+ * on AuthLoading. This means:
+ *  - BlocListener catches ALL states: AuthLoading, AuthError, Authenticated
+ *  - Spinner works on first tap
+ *  - Error snackbars always show
+ *  - _isLoading state is never silently reset by widget rebuild
+ */
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -30,9 +43,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _submit() {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    if (_isLoading) return; // FIX 1 — prevent double-tap submissions
-
-    setState(() => _isLoading = true);
+    if (_isLoading) return; // Prevent double-tap
 
     if (_isLogin) {
       context.read<AuthBloc>().add(
@@ -55,12 +66,29 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() {
       _isLogin = !_isLogin;
       _isLoading = false;
-      _formKey.currentState?.reset();
-      _emailController.clear();
-      _passwordController.clear();
     });
-    // FIX 2 — clear any lingering snackbars when switching modes
+    _formKey.currentState?.reset();
+    _emailController.clear();
+    _passwordController.clear();
     ScaffoldMessenger.of(context).clearSnackBars();
+  }
+
+  void _showSnackBar(String msg, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(msg),
+          backgroundColor:
+              error ? Colors.red.shade700 : Colors.green.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12.r)),
+          margin: EdgeInsets.all(16.w),
+          duration: const Duration(seconds: 4),
+        ),
+      );
   }
 
   @override
@@ -69,46 +97,32 @@ class _LoginScreenState extends State<LoginScreen> {
       body: BlocListener<AuthBloc, AuthState>(
         listener: (context, state) {
           if (state is AuthLoading) {
-            if (!_isLoading) setState(() => _isLoading = true);
+            // Show spinner — LoginScreen is still mounted thanks to
+            // app.dart's buildWhen fix. Previously this state caused
+            // app.dart to unmount LoginScreen entirely.
+            if (mounted && !_isLoading) {
+              setState(() => _isLoading = true);
+            }
           } else if (state is AuthError) {
+            // Show error — LoginScreen is still mounted because
+            // app.dart's buildWhen skips AuthError rebuilds.
             if (mounted) {
               setState(() => _isLoading = false);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(state.message),
-                  backgroundColor: Colors.red.shade700,
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12.r),
-                  ),
-                  margin: EdgeInsets.all(16.w),
-                  duration: const Duration(seconds: 4),
-                ),
-              );
+              _showSnackBar(state.message, error: true);
             }
           } else if (state is Authenticated) {
-            // FIX 3 — THE CORE FIX: do NOT call Navigator here.
-            // app.dart's BlocBuilder watches AuthBloc and automatically
-            // replaces the widget tree with HomeScreen when Authenticated
-            // is emitted. Any Navigator call from here pushes a second
-            // route on top of that and causes a blank/broken screen.
+            // Navigation handled entirely by app.dart BlocBuilder.
+            // Just reset spinner here — do NOT call Navigator.
             if (mounted) setState(() => _isLoading = false);
           } else if (state is PasswordResetSent) {
             if (mounted) {
               setState(() => _isLoading = false);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: const Text(
-                      '✅ Password reset link sent! Check your email.'),
-                  backgroundColor: Colors.green.shade700,
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12.r),
-                  ),
-                  margin: EdgeInsets.all(16.w),
-                ),
-              );
+              _showSnackBar(
+                  '✅ Reset link sent to ${state.email}! Check your inbox.');
             }
+          } else if (state is Unauthenticated) {
+            // Covers logout or ClearAuthError
+            if (mounted) setState(() => _isLoading = false);
           }
         },
         child: Container(
@@ -126,7 +140,7 @@ class _LoginScreenState extends State<LoginScreen> {
           child: SafeArea(
             child: Column(
               children: [
-                // ── Scrollable body ──────────────────────────────────
+                // ── Scrollable body ────────────────────────────────
                 Expanded(
                   child: SingleChildScrollView(
                     padding: EdgeInsets.symmetric(horizontal: 28.w),
@@ -145,11 +159,13 @@ class _LoginScreenState extends State<LoginScreen> {
                               end: Alignment.bottomRight,
                               colors: [
                                 AppTheme.primaryColor,
-                                AppTheme.primaryColor.withOpacity(0.8),
+                                AppTheme.primaryColor
+                                    .withOpacity(0.8),
                                 const Color(0xFF8B5CF6),
                               ],
                             ),
-                            borderRadius: BorderRadius.circular(28.r),
+                            borderRadius:
+                                BorderRadius.circular(28.r),
                             boxShadow: [
                               BoxShadow(
                                 color: AppTheme.primaryColor
@@ -184,7 +200,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         // Login / register title
                         AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 300),
+                          duration:
+                              const Duration(milliseconds: 300),
                           child: Text(
                             _isLogin
                                 ? 'Welcome Back!'
@@ -213,7 +230,8 @@ class _LoginScreenState extends State<LoginScreen> {
                               .textTheme
                               .bodyMedium
                               ?.copyWith(
-                                color: Colors.white.withOpacity(0.7),
+                                color:
+                                    Colors.white.withOpacity(0.7),
                                 fontSize: 14.sp,
                               ),
                           textAlign: TextAlign.center,
@@ -225,11 +243,13 @@ class _LoginScreenState extends State<LoginScreen> {
                         Container(
                           padding: EdgeInsets.all(24.w),
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.05),
+                            color:
+                                Colors.white.withOpacity(0.05),
                             borderRadius:
                                 BorderRadius.circular(20.r),
                             border: Border.all(
-                              color: Colors.white.withOpacity(0.1),
+                              color:
+                                  Colors.white.withOpacity(0.1),
                             ),
                           ),
                           child: Form(
@@ -241,9 +261,10 @@ class _LoginScreenState extends State<LoginScreen> {
                                   controller: _emailController,
                                   label: 'Email Address',
                                   hint: 'name@example.com',
-                                  keyboardType:
-                                      TextInputType.emailAddress,
-                                  prefixIcon: Icons.email_outlined,
+                                  keyboardType: TextInputType
+                                      .emailAddress,
+                                  prefixIcon:
+                                      Icons.email_outlined,
                                   enabled: !_isLoading,
                                   validator: (value) {
                                     if (value?.isEmpty ?? true) {
@@ -261,14 +282,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
                                 // Password
                                 CustomTextField(
-                                  controller: _passwordController,
+                                  controller:
+                                      _passwordController,
                                   label: 'Password',
                                   hint: _isLogin
                                       ? 'Your password'
                                       : 'Min 8 characters',
                                   obscureText: true,
-                                  prefixIcon:
-                                      Icons.lock_outline_rounded,
+                                  prefixIcon: Icons
+                                      .lock_outline_rounded,
                                   enabled: !_isLoading,
                                   validator: (value) {
                                     if (value?.isEmpty ?? true) {
@@ -290,7 +312,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                 if (_isLogin) ...[
                                   SizedBox(height: 8.h),
                                   Align(
-                                    alignment: Alignment.centerRight,
+                                    alignment:
+                                        Alignment.centerRight,
                                     child: TextButton(
                                       onPressed: _isLoading
                                           ? null
@@ -298,7 +321,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                       child: Text(
                                         'Forgot Password?',
                                         style: TextStyle(
-                                          color: AppTheme.primaryColor,
+                                          color: AppTheme
+                                              .primaryColor,
                                           fontSize: 12.sp,
                                         ),
                                       ),
@@ -311,6 +335,60 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
 
                         SizedBox(height: 24.h),
+
+                        // ── Render warm-up note ────────────────────
+                        // Shown when loading to explain a slow first
+                        // login (Render free tier cold start = 50s+)
+                        AnimatedSwitcher(
+                          duration:
+                              const Duration(milliseconds: 400),
+                          child: _isLoading
+                              ? Container(
+                                  key: const ValueKey('loading_hint'),
+                                  padding: EdgeInsets.symmetric(
+                                      horizontal: 16.w,
+                                      vertical: 10.h),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.primaryColor
+                                        .withOpacity(0.1),
+                                    borderRadius:
+                                        BorderRadius.circular(
+                                            12.r),
+                                    border: Border.all(
+                                      color: AppTheme.primaryColor
+                                          .withOpacity(0.2),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize:
+                                        MainAxisSize.min,
+                                    children: [
+                                      SizedBox(
+                                        width: 14.w,
+                                        height: 14.w,
+                                        child:
+                                            CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: AppTheme
+                                              .primaryColor,
+                                        ),
+                                      ),
+                                      SizedBox(width: 10.w),
+                                      Text(
+                                        'Connecting… this may take up to 30s',
+                                        style: TextStyle(
+                                          fontSize: 12.sp,
+                                          color: Colors.white70,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              : const SizedBox.shrink(
+                                  key: ValueKey('idle')),
+                        ),
+
+                        SizedBox(height: 16.h),
 
                         // Submit button
                         CustomButton(
@@ -325,10 +403,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         // Toggle login / register
                         TextButton(
-                          onPressed: _isLoading ? null : _toggleMode,
+                          onPressed:
+                              _isLoading ? null : _toggleMode,
                           style: TextButton.styleFrom(
                             padding: EdgeInsets.symmetric(
-                                horizontal: 16.w, vertical: 8.h),
+                                horizontal: 16.w,
+                                vertical: 8.h),
                           ),
                           child: RichText(
                             text: TextSpan(
@@ -336,7 +416,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ? "Don't have an account? "
                                   : "Already have an account? ",
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.7),
+                                color:
+                                    Colors.white.withOpacity(0.7),
                                 fontSize: 14.sp,
                               ),
                               children: [
@@ -361,7 +442,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
 
-                // ── Footer ───────────────────────────────────────────
+                // ── Footer ─────────────────────────────────────────
                 Container(
                   padding: EdgeInsets.symmetric(vertical: 20.h),
                   decoration: BoxDecoration(
@@ -377,14 +458,15 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: Column(
                     children: [
                       Container(
-                        margin:
-                            EdgeInsets.symmetric(horizontal: 40.w),
+                        margin: EdgeInsets.symmetric(
+                            horizontal: 40.w),
                         height: 1,
                         color: Colors.white.withOpacity(0.1),
                       ),
                       SizedBox(height: 16.h),
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisAlignment:
+                            MainAxisAlignment.center,
                         children: [
                           Text(
                             'Made with ',
@@ -393,11 +475,9 @@ class _LoginScreenState extends State<LoginScreen> {
                               fontSize: 12.sp,
                             ),
                           ),
-                          Icon(
-                            Icons.favorite,
-                            color: Colors.red.shade400,
-                            size: 14.sp,
-                          ),
+                          Icon(Icons.favorite,
+                              color: Colors.red.shade400,
+                              size: 14.sp),
                           Text(
                             ' by ',
                             style: TextStyle(
@@ -476,12 +556,8 @@ class _LoginScreenState extends State<LoginScreen> {
           ElevatedButton(
             onPressed: () {
               final email = emailCtrl.text.trim();
-              if (email.isEmpty || !email.contains('@')) {
-                return; // FIX 4 — basic guard before dispatching
-              }
+              if (email.isEmpty || !email.contains('@')) return;
               Navigator.pop(dialogCtx);
-              // FIX 5 — dispatch to AuthBloc; PasswordResetSent state
-              // is handled in the BlocListener above with a snackbar
               context
                   .read<AuthBloc>()
                   .add(ResetPassword(email: email));
