@@ -1,7 +1,12 @@
 /*
  * chAs AI Creator - App Root Widget
- * Created by: chAs
- * Main app entry with routing and auth handling
+ * FILE: lib/app.dart
+ *
+ * FIXES APPLIED:
+ * 1. buildWhen skips AuthLoading + AuthError during active login
+ *    so LoginScreen is never unmounted mid-login (frozen splash fix)
+ * 2. OnboardingScreen receives onComplete callback — no Navigator
+ *    call from onboarding that leaves LoginScreen on the stack
  */
 
 import 'package:flutter/material.dart';
@@ -22,10 +27,6 @@ class App extends StatefulWidget {
 }
 
 class _AppState extends State<App> {
-  // FIX 1 — onboarding stored as a plain bool, NOT a FutureBuilder.
-  // null = still loading (show splash), true/false = ready.
-  // This completely eliminates the FutureBuilder that was blocking
-  // BlocBuilder from reacting to Authenticated on first login.
   bool? _hasSeenOnboarding;
 
   @override
@@ -34,55 +35,55 @@ class _AppState extends State<App> {
     _initApp();
   }
 
-  // FIX 2 — load onboarding status FIRST, then dispatch AppStarted.
-  // Old code dispatched AppStarted immediately in initState while
-  // FutureBuilder was still running — creating a race where
-  // Authenticated could arrive before FutureBuilder finished,
-  // and the nested SplashScreen swallowed the navigation.
   Future<void> _initApp() async {
     final prefs = await SharedPreferences.getInstance();
     final seen = prefs.getBool('has_seen_onboarding') ?? false;
-
     if (!mounted) return;
-
     setState(() => _hasSeenOnboarding = seen);
-
-    // FIX 3 — AppStarted is only dispatched AFTER onboarding is
-    // known. This guarantees the BlocBuilder always has a
-    // _hasSeenOnboarding value ready when any auth state arrives.
     context.read<AuthBloc>().add(AppStarted());
   }
 
   @override
   Widget build(BuildContext context) {
-    // FIX 4 — while onboarding status is loading, show splash
-    // outside BlocBuilder so there is zero FutureBuilder nesting.
     if (_hasSeenOnboarding == null) {
       return const SplashScreen();
     }
 
     return BlocBuilder<AuthBloc, AuthState>(
+      // ── THE LOGIN FIX ────────────────────────────────────────────
+      // Skip AuthLoading rebuilds (except from AuthInitial) so
+      // LoginScreen stays mounted during the entire login attempt.
+      // Skip AuthError rebuilds so LoginScreen's BlocListener can
+      // show the error snackbar without being unmounted first.
+      buildWhen: (previous, current) {
+        if (current is AuthLoading && previous is! AuthInitial) {
+          return false;
+        }
+        if (current is AuthError) return false;
+        return true;
+      },
       builder: (context, state) {
-
-        // ── Loading / initialising ───────────────────────────────
         if (state is AuthInitial || state is AuthLoading) {
           return const SplashScreen();
         }
 
-        // ── Authenticated ────────────────────────────────────────
-        // This now fires INSTANTLY with nothing blocking it.
-        // No FutureBuilder, no nested async, no race condition.
         if (state is Authenticated) {
           return const HomeScreen();
         }
 
-        // ── Unauthenticated / error / password reset sent ────────
-        // FIX 5 — PasswordResetSent extends Unauthenticated so it
-        // falls through here correctly and keeps LoginScreen visible.
-        // FIX 6 — Plain bool check, zero async inside BlocBuilder.
+        // Unauthenticated / PasswordResetSent
         if (!_hasSeenOnboarding!) {
-          return const OnboardingScreen();
+          // FIX — pass onComplete callback so OnboardingScreen
+          // never calls Navigator itself. When onboarding is done,
+          // we update _hasSeenOnboarding here and BlocBuilder
+          // re-renders LoginScreen cleanly as the home widget.
+          return OnboardingScreen(
+            onComplete: () {
+              setState(() => _hasSeenOnboarding = true);
+            },
+          );
         }
+
         return const LoginScreen();
       },
     );
