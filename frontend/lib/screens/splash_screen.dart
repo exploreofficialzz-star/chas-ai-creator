@@ -1,14 +1,19 @@
 /*
  * chAs AI Creator - Splash Screen
- * Created by: chAs
- * Beautiful animated splash screen
+ * FILE: lib/screens/splash_screen.dart
+ *
+ * Pure visual screen — no navigation logic.
+ * app.dart BlocBuilder is the sole navigation authority.
  */
 
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:lottie/lottie.dart';
 
 import '../config/theme.dart';
+
+// FIX — removed unused 'package:lottie/lottie.dart' import.
+// It was imported but never used, causing a build warning.
+// If you add a Lottie animation later, re-add it then.
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -26,26 +31,26 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   void initState() {
     super.initState();
-    
+
     _controller = AnimationController(
       duration: const Duration(milliseconds: 2000),
       vsync: this,
     );
-    
+
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _controller,
         curve: const Interval(0.0, 0.5, curve: Curves.easeIn),
       ),
     );
-    
+
     _scaleAnimation = Tween<double>(begin: 0.5, end: 1.0).animate(
       CurvedAnimation(
         parent: _controller,
         curve: const Interval(0.0, 0.5, curve: Curves.elasticOut),
       ),
     );
-    
+
     _controller.forward();
   }
 
@@ -73,16 +78,18 @@ class _SplashScreenState extends State<SplashScreen>
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      // Logo Container
+                      // Logo
                       Container(
                         width: 140.w,
                         height: 140.w,
                         decoration: BoxDecoration(
                           color: Colors.white,
-                          borderRadius: BorderRadius.circular(40.r),
+                          borderRadius:
+                              BorderRadius.circular(40.r),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.2),
+                              color:
+                                  Colors.black.withOpacity(0.2),
                               blurRadius: 30,
                               offset: const Offset(0, 15),
                             ),
@@ -94,10 +101,9 @@ class _SplashScreenState extends State<SplashScreen>
                           color: AppTheme.primaryColor,
                         ),
                       ),
-                      
+
                       SizedBox(height: 40.h),
-                      
-                      // App Name
+
                       Text(
                         'chAs AI Creator',
                         style: TextStyle(
@@ -107,10 +113,9 @@ class _SplashScreenState extends State<SplashScreen>
                           letterSpacing: 1.5,
                         ),
                       ),
-                      
+
                       SizedBox(height: 12.h),
-                      
-                      // Tagline
+
                       Text(
                         'Create. Automate. Dominate.',
                         style: TextStyle(
@@ -119,22 +124,21 @@ class _SplashScreenState extends State<SplashScreen>
                           letterSpacing: 2,
                         ),
                       ),
-                      
+
                       SizedBox(height: 60.h),
-                      
-                      // Loading Indicator
+
                       SizedBox(
                         width: 40.w,
                         height: 40.w,
-                        child: CircularProgressIndicator(
+                        child: const CircularProgressIndicator(
                           strokeWidth: 3,
-                          valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.white),
                         ),
                       ),
-                      
+
                       SizedBox(height: 20.h),
-                      
-                      // Loading Text
+
                       Text(
                         'Loading amazing features...',
                         style: TextStyle(
@@ -142,15 +146,16 @@ class _SplashScreenState extends State<SplashScreen>
                           color: Colors.white60,
                         ),
                       ),
-                      
+
                       SizedBox(height: 60.h),
-                      
-                      // Creator Credit
+
                       Container(
-                        padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 8.h),
+                        padding: EdgeInsets.symmetric(
+                            horizontal: 16.w, vertical: 8.h),
                         decoration: BoxDecoration(
                           color: Colors.white.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(20.r),
+                          borderRadius:
+                              BorderRadius.circular(20.r),
                         ),
                         child: Text(
                           'Made with ❤️ by chAs',
@@ -171,3 +176,4 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 }
+
