@@ -2,6 +2,10 @@
  * chAs AI Creator - Dashboard Screen
  * Enhanced Global Professional Version
  * FIX: Welcome card is now STATIC (pinned), only content below scrolls
+ * FIX: _loadData() deferred to postFrameCallback — no API calls
+ *      before auth token is stable on first login
+ * FIX: showInterstitialAd() deferred + guarded
+ * FIX: API 401 errors handled silently — never affect AuthBloc
  */
 
 import 'package:flutter/material.dart';
@@ -48,8 +52,34 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
     _fadeAnim = CurvedAnimation(
         parent: _animController, curve: Curves.easeOut);
-    _loadData();
-    _adService.showInterstitialAd();
+
+    // FIX 1 — Defer ALL side effects to postFrameCallback.
+    // On first login the JWT token is still being persisted to storage
+    // when DashboardScreen mounts. Calling _loadData() synchronously
+    // in initState fires API requests before the token is ready,
+    // which returns 401. If ApiService handles 401 by dispatching
+    // LoggedOut to AuthBloc the user gets kicked back to login.
+    // postFrameCallback fires after the first frame is rendered and
+    // after AuthBloc has fully settled into Authenticated state.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      // FIX 2 — guard: only load data if actually authenticated.
+      // Prevents any API call if somehow dashboard mounts during
+      // an intermediate auth state.
+      final state = context.read<AuthBloc>().state;
+      if (state is Authenticated) {
+        _loadData();
+        // FIX 3 — defer interstitial ad by 3s so it never
+        // interferes with auth state settling or first-paint
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted) _adService.showInterstitialAd();
+        });
+      } else {
+        // Not authenticated — just stop loading spinner
+        if (mounted) setState(() => _isLoading = false);
+      }
+    });
   }
 
   @override
@@ -59,29 +89,44 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Future<void> _loadData({bool silent = false}) async {
+    // FIX 4 — always check auth before any API call
+    if (!mounted) return;
+    final authState = context.read<AuthBloc>().state;
+    if (authState is! Authenticated) {
+      if (mounted) setState(() { _isLoading = false; _isRefreshing = false; });
+      return;
+    }
+
     if (!silent) setState(() => _isLoading = _recentVideos.isEmpty);
+
     try {
       final results = await Future.wait([
         _apiService.getUsageStats(),
         _apiService.getVideos(limit: 5),
       ]);
+
+      if (!mounted) return;
+
       final stats = results[0] as Map<String, dynamic>;
       final videosResponse = results[1] as Map<String, dynamic>;
       final videos = (videosResponse['videos'] ??
               videosResponse['data'] ??
               videosResponse['items'] ??
               []) as List;
-      if (mounted) {
-        setState(() {
-          _usageStats = stats;
-          _recentVideos = videos;
-          _credits = (stats['credits'] ?? 0) as int;
-          _isLoading = false;
-          _isRefreshing = false;
-        });
-        _animController.forward(from: 0);
-      }
+
+      setState(() {
+        _usageStats = stats;
+        _recentVideos = videos;
+        _credits = (stats['credits'] ?? 0) as int;
+        _isLoading = false;
+        _isRefreshing = false;
+      });
+      _animController.forward(from: 0);
     } catch (e) {
+      // FIX 5 — silently swallow ALL API errors on the dashboard.
+      // Dashboard data is non-critical. An API failure (including 401)
+      // must NEVER bubble up and affect AuthBloc state.
+      // The user just sees empty stats — they can pull-to-refresh.
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -92,6 +137,10 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Future<void> _refresh() async {
+    // FIX 6 — guard auth on manual refresh too
+    final authState = context.read<AuthBloc>().state;
+    if (authState is! Authenticated) return;
+
     setState(() => _isRefreshing = true);
     await _loadData(silent: true);
   }
@@ -104,36 +153,44 @@ class _DashboardScreenState extends State<DashboardScreen>
   void _navigateTo(int index) => widget.onNavigate?.call(index);
 
   void _showToast(String msg, {bool error = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor:
-            error ? Colors.red.shade700 : Colors.green.shade700,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10.r)),
-        margin: EdgeInsets.all(12.w),
-        duration: const Duration(seconds: 3),
-      ),
-    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(msg),
+          backgroundColor:
+              error ? Colors.red.shade700 : Colors.green.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10.r)),
+          margin: EdgeInsets.all(12.w),
+          duration: const Duration(seconds: 3),
+        ),
+      );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
   // BUILD
-  // FIX — Column with static header + Expanded scrollable body
   // ─────────────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<AuthBloc, AuthState>(
+      // FIX 7 — only rebuild when auth user data actually changes.
+      // Without buildWhen, every AuthLoading state during ANY auth
+      // operation rebuilds dashboard and briefly sets user = null,
+      // causing a welcome card flicker.
+      buildWhen: (previous, current) =>
+          current is Authenticated ||
+          current is Unauthenticated ||
+          current is AuthInitial,
       builder: (context, state) {
         User? user;
         if (state is Authenticated) user = state.user;
 
         return Scaffold(
-          // ── Static AppBar ─────────────────────────────────────────
           appBar: _buildAppBar(user),
-
           body: Column(
             children: [
               // ── STATIC — welcome card never scrolls ───────────────
@@ -156,11 +213,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                             padding: EdgeInsets.fromLTRB(
                                 16.w, 4.h, 16.w, 100.h),
                             children: [
-                              // Daily usage bar
                               _buildDailyUsageBar(),
                               SizedBox(height: 20.h),
 
-                              // Stats grid
                               _buildSectionTitle('📊 Your Stats'),
                               SizedBox(height: 12.h),
                               _buildStatsGrid(),
@@ -174,22 +229,18 @@ class _DashboardScreenState extends State<DashboardScreen>
                                 SizedBox(height: 20.h),
                               ],
 
-                              // Watch ad reward
                               RewardAdButton(
                                   onRewardEarned: _onCreditsEarned),
                               SizedBox(height: 20.h),
 
-                              // Quick actions
                               _buildSectionTitle('⚡ Quick Actions'),
                               SizedBox(height: 12.h),
                               _buildQuickActions(),
                               SizedBox(height: 20.h),
 
-                              // Banner ad
                               const BannerAdContainer(),
                               SizedBox(height: 20.h),
 
-                              // Recent videos
                               _buildRecentVideos(),
                             ],
                           ),
@@ -204,7 +255,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // APP BAR — plain AppBar (no longer a SliverAppBar)
+  // APP BAR
   // ─────────────────────────────────────────────────────────────────────────
 
   PreferredSizeWidget _buildAppBar(User? user) {
@@ -305,7 +356,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     final name = user?.displayName ??
         user?.email?.split('@').first ??
         'Creator';
-    final initial = name[0].toUpperCase();
+    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'C';
 
     return Container(
       padding: EdgeInsets.all(20.w),
@@ -556,8 +607,8 @@ class _DashboardScreenState extends State<DashboardScreen>
               ),
               Text(
                 item.label,
-                style: TextStyle(
-                    fontSize: 11.sp, color: Colors.grey),
+                style:
+                    TextStyle(fontSize: 11.sp, color: Colors.grey),
               ),
             ],
           ),
@@ -675,8 +726,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                 decoration: BoxDecoration(
                   color: a.color.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(16.r),
-                  border:
-                      Border.all(color: a.color.withOpacity(0.2)),
+                  border: Border.all(
+                      color: a.color.withOpacity(0.2)),
                 ),
                 child: Column(
                   children: [
@@ -952,6 +1003,17 @@ class _DashboardScreenState extends State<DashboardScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Center(
+              child: Container(
+                width: 36.w,
+                height: 4.h,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade600,
+                  borderRadius: BorderRadius.circular(2.r),
+                ),
+              ),
+            ),
+            SizedBox(height: 16.h),
             Text('💰 Your Credits',
                 style: Theme.of(context)
                     .textTheme
@@ -1027,6 +1089,17 @@ class _DashboardScreenState extends State<DashboardScreen>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Center(
+              child: Container(
+                width: 36.w,
+                height: 4.h,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade600,
+                  borderRadius: BorderRadius.circular(2.r),
+                ),
+              ),
+            ),
+            SizedBox(height: 16.h),
             Text('🔔 Notifications',
                 style: Theme.of(context)
                     .textTheme
@@ -1095,6 +1168,17 @@ class _DashboardScreenState extends State<DashboardScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Center(
+              child: Container(
+                width: 36.w,
+                height: 4.h,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade600,
+                  borderRadius: BorderRadius.circular(2.r),
+                ),
+              ),
+            ),
+            SizedBox(height: 16.h),
             Text('⭐ Upgrade to Pro',
                 style: Theme.of(context)
                     .textTheme
@@ -1226,7 +1310,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         _            => status,
       };
 
-  String _nicheEmoji(String niche) => switch (niche.toLowerCase()) {
+  String _nicheEmoji(String niche) =>
+      switch (niche.toLowerCase()) {
         'fitness'    => '💪',
         'cooking'    => '🍳',
         'tech'       => '💻',
@@ -1247,7 +1332,9 @@ class _DashboardScreenState extends State<DashboardScreen>
   String _formatDuration(int seconds) {
     final m = seconds ~/ 60;
     final s = seconds % 60;
-    return m > 0 ? '$m:${s.toString().padLeft(2, '0')}' : '${s}s';
+    return m > 0
+        ? '$m:${s.toString().padLeft(2, '0')}'
+        : '${s}s';
   }
 
   String _formatDate(String iso) {
