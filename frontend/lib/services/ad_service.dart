@@ -1,45 +1,73 @@
 /*
-Ad Service - Unity Ads Implementation (Nigeria Friendly)
-Created by: chAs
-*/
+ * chAs AI Creator - Ad Service (Unity Ads)
+ * FILE: lib/services/ad_service.dart
+ *
+ * FIXES:
+ * 1. AppConfig was referenced throughout but never imported or defined
+ *    anywhere — caused a build-breaking "Undefined name 'AppConfig'" error.
+ *    Fixed by replacing all AppConfig.x references with inline constants
+ *    and dart:io Platform checks.
+ *
+ * 2. Removed unused '../config/theme.dart' import (AppTheme never used here).
+ *
+ * 3. showInterstitialAd() is now fully silent — no exception can escape.
+ *    Dashboard calls this fire-and-forget; any throw was crashing silently
+ *    and interfering with the post-login flow.
+ *
+ * ── HOW TO CONFIGURE ─────────────────────────────────────────────────────
+ * Replace the placeholder IDs below with your real Unity Dashboard values:
+ *   _kAndroidGameId      → Unity Dashboard → Project → Android Game ID
+ *   _kIosGameId          → Unity Dashboard → Project → iOS Game ID
+ *   _kRewardedPlacement  → Placement ID you named "Rewarded_Android" etc.
+ *   _kInterstitialPlacement
+ *   _kBannerPlacement
+ * ─────────────────────────────────────────────────────────────────────────
+ */
 
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:unity_ads_plugin/unity_ads_plugin.dart';
-import '../config/theme.dart';
 
 class AdService {
   static final AdService _instance = AdService._internal();
   factory AdService() => _instance;
   AdService._internal();
 
-  bool _isInitialized = false;
-  
-  // Track ad load states
-  final Map<String, bool> _adLoadStates = {};
-  
-  String get gameId {
-    if (AppConfig.isAndroid) {
-      return AppConfig.unityGameIdAndroid;
-    } else {
-      return AppConfig.unityGameIdIOS;
-    }
-  }
+  // ── Unity Ads configuration ──────────────────────────────────────────────
+  // FIX 1 — replaced AppConfig.x with inline constants.
+  // AppConfig was never defined or imported — build error on every compile.
+  static const String _kAndroidGameId     = '6060848'; // ← your real ID
+  static const String _kIosGameId         = '6060849'; // ← your real ID
+  static const String _kRewardedPlacement = 'Rewarded_Android';
+  static const String _kInterstitialPlacement = 'Interstitial_Android';
+  static const String _kBannerPlacement   = 'Banner_Android';
 
-  String get rewardedAdUnitId => AppConfig.unityRewardedPlacementId;
-  String get interstitialAdUnitId => AppConfig.unityInterstitialPlacementId;
-  String get bannerAdUnitId => AppConfig.unityBannerPlacementId;
+  bool _isInitialized = false;
+  final Map<String, bool> _adLoadStates = {};
+
+  // ── IDs ──────────────────────────────────────────────────────────────────
+
+  String get _gameId =>
+      Platform.isAndroid ? _kAndroidGameId : _kIosGameId;
+
+  String get rewardedAdUnitId     => _kRewardedPlacement;
+  String get interstitialAdUnitId => _kInterstitialPlacement;
+  String get bannerAdUnitId       => _kBannerPlacement;
+
+  // ── Init ─────────────────────────────────────────────────────────────────
 
   Future<void> initialize() async {
     if (_isInitialized) return;
-
     try {
       await UnityAds.init(
-        gameId: gameId,
-        testMode: AppConfig.isDebug,
+        gameId: _gameId,
+        // FIX 1 — was AppConfig.isDebug (undefined). Use kDebugMode.
+        testMode: kDebugMode,
         onComplete: () {
           debugPrint('✅ Unity Ads initialized');
           _isInitialized = true;
-          // Preload ads after initialization
           _loadAds();
         },
         onFailed: (error, message) {
@@ -47,162 +75,148 @@ class AdService {
         },
       );
     } catch (e) {
-      debugPrint('❌ Ad initialization error: $e');
+      debugPrint('❌ Ad init error: $e');
     }
   }
 
-  /// Preload ads after initialization
   Future<void> _loadAds() async {
     await loadRewardedAd();
     await loadInterstitialAd();
   }
 
-  /// Load rewarded ad (pre-cache)
+  // ── Load ─────────────────────────────────────────────────────────────────
+
   Future<void> loadRewardedAd() async {
     if (!_isInitialized) return;
-    
     try {
       await UnityAds.load(
         placementId: rewardedAdUnitId,
-        onComplete: (placementId) {
-          debugPrint('✅ Rewarded ad loaded: $placementId');
-          _adLoadStates[placementId] = true;
+        onComplete: (id) {
+          debugPrint('✅ Rewarded loaded: $id');
+          _adLoadStates[id] = true;
         },
-        onFailed: (placementId, error, message) {
-          debugPrint('❌ Rewarded ad load failed: $error');
-          _adLoadStates[placementId] = false;
+        onFailed: (id, error, message) {
+          debugPrint('❌ Rewarded load failed: $error');
+          _adLoadStates[id] = false;
         },
       );
     } catch (e) {
-      debugPrint('❌ Error loading rewarded ad: $e');
+      debugPrint('❌ loadRewardedAd error: $e');
     }
   }
 
-  /// Load interstitial ad (pre-cache)
   Future<void> loadInterstitialAd() async {
     if (!_isInitialized) return;
-    
     try {
       await UnityAds.load(
         placementId: interstitialAdUnitId,
-        onComplete: (placementId) {
-          debugPrint('✅ Interstitial ad loaded: $placementId');
-          _adLoadStates[placementId] = true;
+        onComplete: (id) {
+          debugPrint('✅ Interstitial loaded: $id');
+          _adLoadStates[id] = true;
         },
-        onFailed: (placementId, error, message) {
-          debugPrint('❌ Interstitial ad load failed: $error');
-          _adLoadStates[placementId] = false;
+        onFailed: (id, error, message) {
+          debugPrint('❌ Interstitial load failed: $error');
+          _adLoadStates[id] = false;
         },
       );
     } catch (e) {
-      debugPrint('❌ Error loading interstitial ad: $e');
+      debugPrint('❌ loadInterstitialAd error: $e');
     }
   }
 
-  /// Check if ad is ready (using cached state)
-  bool isAdReady(String placementId) {
-    return _adLoadStates[placementId] ?? false;
-  }
+  bool isAdReady(String placementId) =>
+      _adLoadStates[placementId] ?? false;
+
+  // ── Show Rewarded ─────────────────────────────────────────────────────────
 
   Future<bool> showRewardedAd({
     required VoidCallback onRewardEarned,
     required VoidCallback onFailed,
   }) async {
-    if (!_isInitialized) {
-      await initialize();
-    }
-
+    if (!_isInitialized) await initialize();
     try {
       await UnityAds.showVideoAd(
         placementId: rewardedAdUnitId,
-        onComplete: (placementId) {
-          debugPrint('✅ Rewarded ad completed: $placementId');
-          _adLoadStates[placementId] = false; // Mark as used
+        onComplete: (id) {
+          debugPrint('✅ Rewarded completed: $id');
+          _adLoadStates[id] = false;
           onRewardEarned();
-          // Reload for next time
           loadRewardedAd();
         },
-        onFailed: (placementId, error, message) {
-          debugPrint('❌ Rewarded ad failed: $error');
-          _adLoadStates[placementId] = false;
+        onFailed: (id, error, message) {
+          debugPrint('❌ Rewarded failed: $error');
+          _adLoadStates[id] = false;
           onFailed();
         },
-        onStart: (placementId) {
-          debugPrint('▶️ Rewarded ad started: $placementId');
-        },
-        onClick: (placementId) {
-          debugPrint('👆 Rewarded ad clicked: $placementId');
-        },
-        onSkipped: (placementId) {
-          debugPrint('⏭️ Rewarded ad skipped: $placementId');
-          _adLoadStates[placementId] = false;
+        onStart:   (id) => debugPrint('▶️ Rewarded started: $id'),
+        onClick:   (id) => debugPrint('👆 Rewarded clicked: $id'),
+        onSkipped: (id) {
+          debugPrint('⏭️ Rewarded skipped: $id');
+          _adLoadStates[id] = false;
           onFailed();
-          // Reload for next time
           loadRewardedAd();
         },
       );
       return true;
     } catch (e) {
-      debugPrint('❌ Error showing rewarded ad: $e');
+      debugPrint('❌ showRewardedAd error: $e');
       onFailed();
       return false;
     }
   }
 
+  // ── Show Interstitial ─────────────────────────────────────────────────────
+
   Future<bool> showInterstitialAd() async {
-    if (!_isInitialized) {
-      await initialize();
-    }
-
-    // Check if ad is ready first
-    if (!isAdReady(interstitialAdUnitId)) {
-      debugPrint('⚠️ Interstitial ad not ready, attempting to load...');
-      await loadInterstitialAd();
-      // Small delay to allow load attempt
-      await Future.delayed(const Duration(milliseconds: 500));
-    }
-
+    // FIX 3 — entire method is wrapped in try/catch so nothing
+    // can escape and disturb the post-login flow. Dashboard calls
+    // this fire-and-forget inside a Future.delayed — any uncaught
+    // exception here was killing the isolate silently.
     try {
+      if (!_isInitialized) await initialize();
+
+      if (!isAdReady(interstitialAdUnitId)) {
+        debugPrint('⚠️ Interstitial not ready — loading...');
+        await loadInterstitialAd();
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+
       await UnityAds.showVideoAd(
         placementId: interstitialAdUnitId,
-        onComplete: (placementId) {
-          debugPrint('✅ Interstitial ad completed: $placementId');
-          _adLoadStates[placementId] = false;
-          // Reload for next time
+        onComplete: (id) {
+          debugPrint('✅ Interstitial completed: $id');
+          _adLoadStates[id] = false;
           loadInterstitialAd();
         },
-        onFailed: (placementId, error, message) {
-          debugPrint('❌ Interstitial ad failed: $error');
-          _adLoadStates[placementId] = false;
+        onFailed: (id, error, message) {
+          debugPrint('❌ Interstitial failed: $error');
+          _adLoadStates[id] = false;
         },
-        onStart: (placementId) {
-          debugPrint('▶️ Interstitial ad started: $placementId');
-        },
-        onClick: (placementId) {
-          debugPrint('👆 Interstitial ad clicked: $placementId');
-        },
-        onSkipped: (placementId) {
-          debugPrint('⏭️ Interstitial ad skipped: $placementId');
-          _adLoadStates[placementId] = false;
+        onStart:   (id) => debugPrint('▶️ Interstitial started: $id'),
+        onClick:   (id) => debugPrint('👆 Interstitial clicked: $id'),
+        onSkipped: (id) {
+          debugPrint('⏭️ Interstitial skipped: $id');
+          _adLoadStates[id] = false;
           loadInterstitialAd();
         },
       );
       return true;
     } catch (e) {
-      debugPrint('❌ Error showing interstitial ad: $e');
+      debugPrint('❌ showInterstitialAd error: $e');
       return false;
     }
   }
 
+  // ── Banner ────────────────────────────────────────────────────────────────
+
   Widget createBannerAd() {
     return UnityBannerAd(
       placementId: bannerAdUnitId,
-      onLoad: (placementId) => debugPrint('✅ Banner loaded: $placementId'),
-      onClick: (placementId) => debugPrint('👆 Banner clicked: $placementId'),
-      onFailed: (placementId, error, message) {
-        debugPrint('❌ Banner failed: $error');
-      },
-      onShown: (placementId) => debugPrint('👁️ Banner shown: $placementId'),
+      onLoad:   (id) => debugPrint('✅ Banner loaded: $id'),
+      onClick:  (id) => debugPrint('👆 Banner clicked: $id'),
+      onFailed: (id, error, message) =>
+          debugPrint('❌ Banner failed: $error'),
+      onShown:  (id) => debugPrint('👁️ Banner shown: $id'),
     );
   }
 }
