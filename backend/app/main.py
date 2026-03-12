@@ -32,6 +32,15 @@ from app.core.logging import setup_logging, get_logger
 from app.core.exceptions import register_exception_handlers
 register_exception_handlers(app)
 
+from app.models.payment import seed_default_plans, seed_default_packages
+from app.db.base import get_db
+
+async with lifespan:
+    create_tables()
+    db = next(get_db())
+    seed_default_plans(db)
+    seed_default_packages(db)
+   
 setup_logging()
 logger = get_logger(__name__)
 
@@ -39,11 +48,16 @@ logger = get_logger(__name__)
 _router_load_error: str = ""
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan — startup + shutdown."""
-    logger.info("🚀 chAs AI Creator starting up...")
 
+from app.db.base import create_tables, health_check
+
+@asynccontextmanager
+async def lifespan(app):
+    create_tables()          # ← add this
+    db_ok = health_check()   # ← and this
+    if not db_ok:
+        logger.warning("⚠️ Database unreachable at startup")
+    yield
     # ── Config validation (moved from @on_event — avoids duplicate handler) ──
     errors = []
     if not settings.SECRET_KEY or len(settings.SECRET_KEY) < 32:
