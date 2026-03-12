@@ -15,6 +15,9 @@ FIXES:
    Moved config validation into lifespan so there's one startup handler.
 
 4. Fallback router now shows the real error so it's diagnosable in prod.
+5. FIXED: Removed stray `async with lifespan:` block and misplaced seed calls.
+6. FIXED: Moved exception handler registration to after app creation.
+7. FIXED: Database seeding moved into lifespan context manager.
 """
 
 import os
@@ -29,36 +32,17 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.core.exceptions import APIException
 from app.core.logging import setup_logging, get_logger
-from app.core.exceptions import register_exception_handlers
-register_exception_handlers(app)
-
-from app.models.payment import seed_default_plans, seed_default_packages
-from app.db.base import get_db
-
-async with lifespan:
-    create_tables()
-    db = next(get_db())
-    seed_default_plans(db)
-    seed_default_packages(db)
-   
-setup_logging()
-logger = get_logger(__name__)
 
 # Store router load error so fallback endpoint can expose it
 _router_load_error: str = ""
 
+setup_logging()
+logger = get_logger(__name__)
 
-
-from app.db.base import create_tables, health_check
 
 @asynccontextmanager
-async def lifespan(app):
-    create_tables()          # ← add this
-    db_ok = health_check()   # ← and this
-    if not db_ok:
-        logger.warning("⚠️ Database unreachable at startup")
-    yield
-    # ── Config validation (moved from @on_event — avoids duplicate handler) ──
+async def lifespan(app: FastAPI):
+    # ── Config validation ────────────────────────────────────────────────────
     errors = []
     if not settings.SECRET_KEY or len(settings.SECRET_KEY) < 32:
         errors.append("SECRET_KEY must be at least 32 characters")
@@ -77,8 +61,24 @@ async def lifespan(app):
 
     # ── Database ──────────────────────────────────────────────────────────────
     try:
-        from app.db.base import engine, Base
-        Base.metadata.create_all(bind=engine)
+        from app.db.base import engine, Base, create_tables, health_check
+        from app.models.payment import seed_default_plans, seed_default_packages
+        from app.db.base import get_db
+        
+        create_tables()
+        db_ok = health_check()
+        if not db_ok:
+            logger.warning("⚠️ Database unreachable at startup")
+        else:
+            # Seed default data
+            try:
+                db = next(get_db())
+                seed_default_plans(db)
+                seed_default_packages(db)
+                logger.info("✅ Database seeded with default plans/packages")
+            except Exception as e:
+                logger.warning(f"⚠️ Database seeding failed: {e}")
+        
         logger.info("✅ Database tables created/verified")
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")
@@ -88,11 +88,11 @@ async def lifespan(app):
     app.state.ai_services = {}
     try:
         if settings.HUGGINGFACE_API_KEY:
-            from app.services.ai.text_generation  import TextGenerationService
+            from app.services.ai.text_generation import TextGenerationService
             from app.services.ai.image_generation import ImageGenerationService
             from app.services.ai.video_generation import VideoGenerationService
 
-            app.state.ai_services["text"]  = TextGenerationService()
+            app.state.ai_services["text"] = TextGenerationService()
             app.state.ai_services["image"] = ImageGenerationService()
             app.state.ai_services["video"] = VideoGenerationService()
             logger.info("✅ AI services initialized")
@@ -123,11 +123,15 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description="🎬 AI-powered video content automation platform by chAs",
-    docs_url="/docs"         if settings.DEBUG else None,
-    redoc_url="/redoc"       if settings.DEBUG else None,
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
     openapi_url="/openapi.json" if settings.DEBUG else None,
     lifespan=lifespan,
 )
+
+# ── Exception handlers (MOVED HERE - after app creation) ─────────────────────
+from app.core.exceptions import register_exception_handlers
+register_exception_handlers(app)
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
 # FIX 1 — allow_credentials=True + allow_origins=["*"] is browser-rejected.
@@ -170,8 +174,8 @@ async def api_exception_handler(request: Request, exc: APIException):
     return JSONResponse(
         status_code=exc.status_code,
         content={
-            "error":   exc.message,
-            "code":    exc.error_code,
+            "error": exc.message,
+            "code": exc.error_code,
             "success": False,
         },
     )
@@ -183,9 +187,9 @@ async def general_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
         content={
-            "error":   "Internal server error"
-                       if not settings.DEBUG else str(exc),
-            "code":    "INTERNAL_ERROR",
+            "error": "Internal server error"
+            if not settings.DEBUG else str(exc),
+            "code": "INTERNAL_ERROR",
             "success": False,
         },
     )
@@ -193,31 +197,31 @@ async def general_exception_handler(request: Request, exc: Exception):
 
 # ── Health / Root ─────────────────────────────────────────────────────────────
 
-@app.get("/health",  tags=["Health"])
+@app.get("/health", tags=["Health"])
 @app.get("/healthz", tags=["Health"])
 async def health_check():
     """Health check for Render."""
     return {
-        "status":      "healthy",
-        "version":     settings.APP_VERSION,
-        "app":         settings.APP_NAME,
-        "creator":     settings.APP_CREATOR,
+        "status": "healthy",
+        "version": settings.APP_VERSION,
+        "app": settings.APP_NAME,
+        "creator": settings.APP_CREATOR,
         "environment": settings.ENVIRONMENT,
-        "timestamp":   time.time(),
+        "timestamp": time.time(),
     }
 
 
-@app.get("/",  tags=["Root"])
+@app.get("/", tags=["Root"])
 @app.head("/", include_in_schema=False)
 async def root():
     return {
-        "app":         settings.APP_NAME,
-        "version":     settings.APP_VERSION,
-        "creator":     settings.APP_CREATOR,
+        "app": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+        "creator": settings.APP_CREATOR,
         "description": "AI-powered video content automation platform",
         "environment": settings.ENVIRONMENT,
-        "docs":        "/docs" if settings.DEBUG else None,
-        "health":      "/health",
+        "docs": "/docs" if settings.DEBUG else None,
+        "health": "/health",
     }
 
 
@@ -227,15 +231,15 @@ try:
     from app.api.v1 import auth, users, videos, ai_services, payments
 
     app.include_router(
-        auth.router,        prefix="/api/v1/auth",     tags=["Authentication"])
+        auth.router, prefix="/api/v1/auth", tags=["Authentication"])
     app.include_router(
-        users.router,       prefix="/api/v1/users",    tags=["Users"])
+        users.router, prefix="/api/v1/users", tags=["Users"])
     app.include_router(
-        videos.router,      prefix="/api/v1/videos",   tags=["Videos"])
+        videos.router, prefix="/api/v1/videos", tags=["Videos"])
     app.include_router(
-        ai_services.router, prefix="/api/v1/ai",       tags=["AI Services"])
+        ai_services.router, prefix="/api/v1/ai", tags=["AI Services"])
     app.include_router(
-        payments.router,    prefix="/api/v1/payments", tags=["Payments"])
+        payments.router, prefix="/api/v1/payments", tags=["Payments"])
 
     logger.info("✅ API routes registered")
 
@@ -250,7 +254,7 @@ except Exception as e:
     async def error_info():
         # FIX 4 — expose the real error so it's diagnosable
         return {
-            "error":  "API routes failed to load",
+            "error": "API routes failed to load",
             "detail": _router_load_error,
         }
 
