@@ -29,6 +29,8 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.core.exceptions import APIException
 from app.core.logging import setup_logging, get_logger
+from app.core.exceptions import register_exception_handlers
+register_exception_handlers(app)
 
 setup_logging()
 logger = get_logger(__name__)
