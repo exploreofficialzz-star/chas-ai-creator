@@ -1,770 +1,1010 @@
 """
-Text generation service using LLMs.
+AI Text Generation Service — Real AI, not mock templates.
 FILE: app/services/ai/text_generation.py
 
-FIXES:
-1. generate_script() was missing aspect_ratio, target_platforms, voice_style
-   params — video_generation.py task passes all three, causing TypeError.
+Calls HuggingFace Inference API (Mistral-7B-Instruct) with the user's
+actual idea and generates: title, scenes, captions, hashtags, SEO tags,
+narration, platform tips and post copy — all contextually relevant to
+what the user typed, not hardcoded.
 
-2. MOCK_TEMPLATES was missing niches: gaming, education, comedy, music,
-   fashion, entertainment, news — these would fall through to "motivation"
-   template silently.
-
-3. _generate_narration() — was stripping ALL non-word chars including
-   spaces, making narration run-on. Fixed regex to preserve spaces.
-
-4. smart_generate_plan() added — this is what ai_services.py calls for
-   the /smart-plan endpoint used by SmartCreateScreen.
-
-5. platform_tips added to smart plan — frontend's Platforms tab was
-   always empty because the API never returned platform_tips.
-
-6. caption field added per-scene for smart plan — frontend scene card
-   shows caption in italic below description.
+Fallback chain:
+  1. Mistral-7B-Instruct-v0.3 (best quality, free tier)
+  2. Phi-3-mini-4k-instruct     (faster, good quality)
+  3. Rich rule-based generator  (offline, always works)
 """
 
+import base64
 import json
 import re
-from typing import List, Dict, Any, Optional
+import uuid
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
-from app.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-FALLBACK_MODELS = [
+_HF_BASE    = "https://api-inference.huggingface.co/models"
+_MODELS     = [
     "mistralai/Mistral-7B-Instruct-v0.3",
+    "microsoft/Phi-3-mini-4k-instruct",
     "HuggingFaceH4/zephyr-7b-beta",
-    "tiiuae/falcon-7b-instruct",
-    "google/flan-t5-large",
 ]
-
-NICHE_HASHTAGS: Dict[str, List[str]] = {
-    "general":       ["#viral", "#trending", "#fyp", "#foryou", "#content"],
-    "animals":       ["#animals", "#pets", "#cute", "#animalsoftiktok", "#petlover", "#wildlife"],
-    "tech":          ["#tech", "#technology", "#innovation", "#gadgets", "#ai", "#future"],
-    "cooking":       ["#cooking", "#food", "#recipe", "#foodie", "#homemade", "#chef"],
-    "motivation":    ["#motivation", "#inspiration", "#success", "#mindset", "#goals", "#hustle"],
-    "fitness":       ["#fitness", "#workout", "#gym", "#health", "#exercise", "#bodybuilding"],
-    "travel":        ["#travel", "#adventure", "#wanderlust", "#explore", "#vacation", "#tourism"],
-    "gaming":        ["#gaming", "#gamer", "#videogames", "#gameplay", "#streamer", "#esports"],
-    "education":     ["#education", "#learning", "#knowledge", "#study", "#facts", "#didyouknow"],
-    "comedy":        ["#comedy", "#funny", "#humor", "#lol", "#meme", "#laugh"],
-    "music":         ["#music", "#song", "#musician", "#artist", "#newmusic", "#afrobeats"],
-    "fashion":       ["#fashion", "#style", "#ootd", "#outfit", "#trendy", "#africanfashion"],
-    "finance":       ["#finance", "#money", "#investing", "#wealth", "#business", "#entrepreneur"],
-    "entertainment": ["#entertainment", "#celebrity", "#movies", "#tvshow", "#nollywood"],
-    "news":          ["#news", "#currentevents", "#breaking", "#world", "#naijanews"],
-}
-
-NIGERIA_HASHTAGS = ["#naija", "#nigeria", "#africa", "#9ja", "#abuja", "#lagos"]
-
-PLATFORM_TIPS: Dict[str, Dict[str, str]] = {
-    "tiktok":    {"tip": "Use trending audio and post between 7–9 PM WAT for max reach.",    "best_time": "7–9 PM WAT"},
-    "youtube":   {"tip": "Add chapters and a strong hook in the first 3 seconds.",           "best_time": "12–3 PM WAT"},
-    "instagram": {"tip": "Reels under 30s get boosted. Use 3–5 niche hashtags in caption.",  "best_time": "11 AM–1 PM WAT"},
-    "facebook":  {"tip": "Native uploads get 3× more reach than shared links. Post Tue–Thu.", "best_time": "1–3 PM WAT"},
-    "twitter":   {"tip": "Thread the video with a strong opening tweet to drive clicks.",     "best_time": "8–10 AM WAT"},
-    "linkedin":  {"tip": "Start with a bold insight or stat. Professional tone works best.",  "best_time": "Tue 8–10 AM WAT"},
-}
-
-MOCK_TEMPLATES: Dict[str, Dict[str, Any]] = {
-    "animals": {
-        "titles": [
-            "Adorable Animal Moments That Will Melt Your Heart 🐾",
-            "Wild Animals Doing the Most Unexpected Things 🦁",
-            "The Cutest Baby Animals You've Ever Seen 🐣",
-        ],
-        "scenes": [
-            ("A fluffy golden retriever puppy playing in a sunny meadow", "Pure joy! 🐶"),
-            ("A curious cat peeking from behind a colorful flower pot", "Caught you! 😸"),
-            ("A baby elephant splashing water with its trunk", "Splash time! 🐘"),
-            ("Penguins waddling on an icy landscape", "Squad goals 🐧"),
-            ("A lion cub rolling in golden savanna grass", "King in training 👑"),
-            ("A baby monkey swinging from a tree branch", "Hanging out 🐒"),
-            ("Dolphins leaping through crystal ocean waves", "Freedom! 🐬"),
-            ("A colorful parrot speaking into a tiny microphone", "Say it louder 🦜"),
-        ],
-    },
-    "tech": {
-        "titles": [
-            "The Future of Technology is Here 🤖",
-            "Top Tech Gadgets Changing the World in 2026 📱",
-            "AI Is Doing WHAT Now?! 🧠",
-        ],
-        "scenes": [
-            ("Futuristic holographic interface displaying data streams", "The future is NOW 🔮"),
-            ("Robot arm precisely assembling electronics in a lab", "Precision like never before ⚙️"),
-            ("Person in advanced VR headset exploring virtual world", "Step inside 🥽"),
-            ("Smart home devices synced in a sleek modern apartment", "Your home, smarter 🏠"),
-            ("AI chip under microscope with glowing circuits", "Brains of the future 💡"),
-            ("Self-driving car navigating a busy city at night", "No hands needed 🚗"),
-            ("Person charging phone wirelessly from across a room", "Zero cables ⚡"),
-            ("Humanoid robot helping an elderly person walk", "Tech with heart 🤝"),
-        ],
-    },
-    "cooking": {
-        "titles": [
-            "Quick & Delicious Nigerian Recipe You Need to Try 🍲",
-            "5-Minute Meals That Taste Like Hours of Cooking ⏱️",
-            "Street Food Magic: Recipes from Lagos 🌶️",
-        ],
-        "scenes": [
-            ("Fresh ingredients beautifully arranged on a wooden board", "Fresh is best 🥦"),
-            ("Chef's hands chopping colorful vegetables rapidly", "Chop it up! 🔪"),
-            ("Steam rising from a sizzling pan with jollof rice", "The aroma! 😋"),
-            ("Perfectly plated dish garnished with fresh herbs", "Eat with your eyes first 👀"),
-            ("Pouring rich palm oil stew over white rice", "Nigerian classic 🍛"),
-            ("Crispy suya being sliced on a wooden board over coals", "Suya time! 🔥"),
-            ("Freshly fried puff puff golden and fluffy on a tray", "Snack time 🟡"),
-            ("Cold zobo drink poured into a glass with ice cubes", "Refreshing! 🍹"),
-        ],
-    },
-    "motivation": {
-        "titles": [
-            "Believe in Yourself — Anything Is Possible 💪",
-            "From Zero to Hero: Your Comeback Story Starts Now 🚀",
-            "Stop Waiting, Start Building Your Dreams Today 🔥",
-        ],
-        "scenes": [
-            ("Person standing on mountain peak at sunrise, arms wide open", "You made it 🌅"),
-            ("Hands writing bold goals in a leather journal", "Write it down ✍️"),
-            ("Athlete sprinting on track in the rain, never stopping", "Push harder 🏃"),
-            ("Entrepreneur celebrating a big win in their office", "Success is yours 🏆"),
-            ("Student studying late under a lamp, determined face", "Grind season 📚"),
-            ("Young African professional in a sharp suit, confident", "Dress for success 👔"),
-            ("Person smashing a board with their bare hands", "Break your limits 💥"),
-            ("Sunrise over Lagos skyline, full of possibility", "New day, new chance 🌄"),
-        ],
-    },
-    "fitness": {
-        "titles": [
-            "Transform Your Body in 30 Days With This Workout 💪",
-            "Home Workout Routine That Actually Works 🏠",
-            "No Gym? No Problem — Build Muscle Anywhere 🔥",
-        ],
-        "scenes": [
-            ("Person doing explosive push-ups at sunrise outdoors", "Morning grind 🌅"),
-            ("Athlete performing clean pull-ups on an outdoor bar", "Level up 💪"),
-            ("Person doing high knees in a home living room", "No gym needed 🏠"),
-            ("Trainer demonstrating perfect squat form in a gym", "Form is everything 🎯"),
-            ("Person drinking protein shake post-workout outside", "Fuel your gains 🥤"),
-            ("Before and after split screen of body transformation", "The results speak 📊"),
-            ("Group fitness class with everyone sweating together", "Team work 👥"),
-            ("Person meditating after an intense workout session", "Recovery matters 🧘"),
-        ],
-    },
-    "travel": {
-        "titles": [
-            "Hidden Gems in Nigeria You've Never Seen 🇳🇬",
-            "Top African Destinations to Visit in 2026 ✈️",
-            "Budget Travel Hacks That Actually Work 💰",
-        ],
-        "scenes": [
-            ("Aerial view of Erin Ijesha waterfall cascading through forest", "Nature's masterpiece 🌊"),
-            ("Colorful Lagos market filled with vibrant textiles and people", "Culture overload 🎨"),
-            ("Sunset over Lekki beach with golden reflections on water", "Golden hour 🌅"),
-            ("Traditional Benin bronze sculptures displayed in a museum", "Rich heritage 🏛️"),
-            ("Traveler hiking through Obudu mountain range at sunrise", "Adventure awaits ⛰️"),
-            ("Busy street food scene in Abuja Night Market with lights", "Eat like a local 🍢"),
-            ("Luxury resort pool overlooking a pristine ocean view", "Living the life 🏖️"),
-            ("Plane window view above African clouds at golden sunset", "Up and away ✈️"),
-        ],
-    },
-    "finance": {
-        "titles": [
-            "How to Make Money Work for You in Nigeria 💰",
-            "Investment Strategies Every Nigerian Should Know 📈",
-            "From Salary to Wealth: The Nigerian Blueprint 🏦",
-        ],
-        "scenes": [
-            ("Stack of naira notes arranged next to investment charts", "Money moves 💵"),
-            ("Person confidently using a mobile banking app", "Digital finance 📱"),
-            ("Real estate properties in an upscale Nigerian neighborhood", "Property wins 🏘️"),
-            ("Stock market graph trending sharply upward with green bars", "Watch it grow 📈"),
-            ("Young entrepreneur receiving payment notification on phone", "Ding! Money in 💸"),
-            ("Person opening a savings account at a modern bank branch", "Start saving today 🏦"),
-            ("Laptop showing a crypto or investment portfolio in profit", "Future of finance 🔐"),
-            ("Successful Nigerian family standing proudly in their home", "The dream 🏠"),
-        ],
-    },
-    # FIX 2 — added missing niches
-    "gaming": {
-        "titles": [
-            "Gaming Moments That Broke the Internet 🎮",
-            "Top 5 Games Every African Gamer Must Play in 2026 🕹️",
-            "When the Game Gets TOO Real 😱",
-        ],
-        "scenes": [
-            ("Gamer's hands on controller with intense focus, screen glow", "In the zone 🎮"),
-            ("Huge esports arena packed with screaming fans in Africa", "The crowd goes wild 🏟️"),
-            ("Epic in-game explosion with a player celebrating wildly", "Get rekt! 💥"),
-            ("Streamer laughing hard at an unexpected game moment", "LOL moment 😂"),
-            ("Top player's leaderboard showing rank #1 globally", "World's best 🥇"),
-            ("Split screen showing beginner vs pro playing same level", "The glow up 📈"),
-            ("Unboxing a brand new gaming setup in a dark room", "Setup reveal 📦"),
-            ("Final boss defeated with epic slow-motion cutscene", "Victory! 🏆"),
-        ],
-    },
-    "education": {
-        "titles": [
-            "Mind-Blowing Facts You Won't Believe Are True 🤯",
-            "Learn This Skill in 60 Seconds and Change Your Life 📚",
-            "Things School Never Taught You But Should Have 🎓",
-        ],
-        "scenes": [
-            ("Animated brain lighting up with colorful knowledge sparks", "Knowledge unlocked 🧠"),
-            ("Student's eureka moment, light bulb above their head", "Aha moment! 💡"),
-            ("Open book with vibrant illustrations flying off the pages", "Words come alive 📖"),
-            ("Chalkboard filling up with equations and diagrams rapidly", "Big brain time 🔢"),
-            ("Person confidently presenting a project to an audience", "Speak your truth 🎤"),
-            ("African teacher and excited students in a bright classroom", "Education wins 👩‍🏫"),
-            ("Split screen: person who studied vs person who didn't", "Study or regret 📊"),
-            ("Graduation cap tossed in air with confetti celebration", "You made it 🎓"),
-        ],
-    },
-    "comedy": {
-        "titles": [
-            "When Life in Nigeria Gets Too Funny 😂",
-            "Relatable African Moments That Hit Different 💀",
-            "Nigerian Mum Energy We All Know Too Well 👀",
-        ],
-        "scenes": [
-            ("Person doing an exaggerated double-take at shocking news", "Did they really?! 😭"),
-            ("Classic Nigerian mum face when you come home late", "You're finished 😤"),
-            ("Person trying to explain a mistake with wild hand gestures", "It wasn't me! 🙈"),
-            ("Overly dressed person showing up to a casual hangout", "Extra level 100 💃"),
-            ("Phone battery dying at the most dramatic possible moment", "WHY NOW?! 😩"),
-            ("Person dancing alone thinking no one is watching them", "Caught in 4K 📷"),
-            ("Queue of people rushing as NEPA restores power suddenly", "Light don come! ⚡"),
-            ("Friends arguing about who ate the last piece of food", "Who touched my food 😡"),
-        ],
-    },
-    "music": {
-        "titles": [
-            "Afrobeats Songs Breaking the Internet Right Now 🎵",
-            "Nigerian Artists Who Are Taking Over the World 🌍",
-            "When the Beat Drops Just Right 🔥",
-        ],
-        "scenes": [
-            ("Concert crowd dancing to afrobeats under colorful stage lights", "Feel the vibe 🎶"),
-            ("Artist recording in a professional Lagos music studio", "In the booth 🎙️"),
-            ("Vinyl record spinning with vibrant music wave visualizer", "Good music hits different 🎵"),
-            ("Street dancer freestyling to afrobeats in a Lagos market", "Lagos moves 💃"),
-            ("Split screen comparing old vs new Nigerian music eras", "The evolution 📈"),
-            ("Musician at a piano composing a soulful melody alone", "The creation 🎹"),
-            ("Fans singing every word at a live concert passionately", "We know all the words 🎤"),
-            ("Album artwork reveal with dramatic lighting and energy", "New music incoming 🔊"),
-        ],
-    },
-    "fashion": {
-        "titles": [
-            "African Fashion That's Taking Over the World 👗",
-            "How to Slay on a Budget Like a Nigerian 💅",
-            "Ankara Outfit Ideas You Need This Season 🧵",
-        ],
-        "scenes": [
-            ("Model in stunning Ankara outfit walking confidently on runway", "Slay nation 👑"),
-            ("Close-up of intricate handmade African beadwork jewelry", "Craftsmanship 💎"),
-            ("Fashion designer sketching bold new collection in Lagos", "Creating magic ✏️"),
-            ("Street style photo shoot in colorful Lekki neighborhood", "Lagos streets 📸"),
-            ("Before and after styling transformation with local fabric", "The glow up ✨"),
-            ("Hairstylist finishing an elaborate braided updo", "Crown complete 💆"),
-            ("Flat lay of colorful African print accessories and fabric", "The details 🎨"),
-            ("Group of friends dressed in matching Ankara outfits laughing", "Aso-ebi goals 👯"),
-        ],
-    },
-    "entertainment": {
-        "titles": [
-            "Nollywood Scenes That Hit Completely Different 🎬",
-            "Nigerian Celebrities Living Their Best Life 🌟",
-            "African Pop Culture Moments Nobody Saw Coming 👀",
-        ],
-        "scenes": [
-            ("Nollywood movie premiere with red carpet and flashbulbs", "Lights, camera! 🎬"),
-            ("Nigerian celebrity surprising fans with generous gift", "King/Queen behavior 👑"),
-            ("Behind the scenes of a major African music video shoot", "Making magic 🎥"),
-            ("Award show moment with emotional winner speech", "They deserve it 🏆"),
-            ("Iconic movie line being reenacted with hilarious result", "Classic moment 😂"),
-            ("African content creator filming viral video in kitchen", "Going viral 📱"),
-            ("Sold-out concert venue with massive crowd energy", "Epic show 🎉"),
-            ("Two celebrities meeting unexpectedly with surprised reaction", "The crossover 🤝"),
-        ],
-    },
-    "news": {
-        "titles": [
-            "Breaking News That Every Nigerian Needs to Know Today 📰",
-            "Top 5 Stories Shaping Africa Right Now 🌍",
-            "What's Really Going On in Nigeria This Week 🇳🇬",
-        ],
-        "scenes": [
-            ("News anchor at desk with BREAKING NEWS banner below", "Breaking now 📺"),
-            ("Aerial view of an event or development in a Nigerian city", "On the ground 🛰️"),
-            ("Journalist interviewing key figure on location outdoors", "Getting answers 🎙️"),
-            ("Social media feed blowing up with trending hashtag", "Twitter is talking 🐦"),
-            ("Graph or infographic showing key statistics visually", "The numbers 📊"),
-            ("Citizens reacting to major announcement on the street", "People's voice 🗣️"),
-            ("Government building or institution relevant to the story", "Official response 🏛️"),
-            ("Split screen showing what was promised vs what happened", "Accountability 📋"),
-        ],
-    },
-}
+# Vision models for analyzing user-uploaded reference images
+_VISION_MODELS = [
+    "Salesforce/blip-image-captioning-large",   # Fast, reliable captions
+    "nlpconnect/vit-gpt2-image-captioning",     # Fallback vision model
+]
+_TIMEOUT    = 45.0
 
 
 class TextGenerationService:
-    """Service for generating video scripts and text content."""
 
     def __init__(self):
-        self.api_key  = settings.HUGGINGFACE_API_KEY
-        self.api_base = "https://api-inference.huggingface.co/models"
-        self.scene_duration = 3  # seconds per scene
+        from app.config import settings
+        self.api_key = getattr(settings, "HUGGINGFACE_API_KEY", None) or ""
 
-    # ─── MAIN SCRIPT GENERATION ───────────────────────────────────────────────
+    # ── PUBLIC ────────────────────────────────────────────────────────────────
 
     async def generate_script(
         self,
         niche: str,
-        video_type: str = "silent",
-        duration: int = 30,
+        video_type: str         = "silent",
+        duration: int           = 30,
         user_instructions: Optional[str] = None,
-        style: str = "cinematic",
-        # FIX 1 — new params that video_generation.py task passes
-        aspect_ratio: str = "9:16",
+        style: str              = "cinematic",
+        aspect_ratio: str       = "9:16",
         target_platforms: Optional[List[str]] = None,
-        voice_style: str = "professional",
+        voice_style: str        = "professional",
+        reference_images: Optional[List[str]] = None,  # List of image URLs or base64
     ) -> Dict[str, Any]:
-        """Generate full video script with scenes, hashtags, and narration."""
+        """
+        Generate a complete video script using AI.
+        If reference_images are provided, the vision model first analyzes
+        them and the descriptions are injected into the script prompt so
+        every scene/image prompt stays consistent with the user's visuals.
+        """
+        platforms   = target_platforms or ["tiktok"]
+        scene_count = max(3, min(12, duration // 3))
 
-        if target_platforms is None:
-            target_platforms = ["tiktok"]
-
-        num_scenes = max(3, duration // self.scene_duration)
+        # Analyze uploaded reference images first
+        image_context = ""
+        if reference_images:
+            image_context = await self._analyze_reference_images(reference_images)
+            logger.info(f"Reference images analyzed: {image_context[:100]}...")
 
         prompt = self._build_script_prompt(
             niche=niche,
+            idea=user_instructions or f"Create a {style} {niche} video",
             video_type=video_type,
-            num_scenes=num_scenes,
-            user_instructions=user_instructions,
+            duration=duration,
             style=style,
-            target_platforms=target_platforms,
+            aspect_ratio=aspect_ratio,
+            platforms=platforms,
             voice_style=voice_style,
+            scene_count=scene_count,
+            image_context=image_context,
         )
 
-        script_text = None
-
-        if self.api_key:
-            for model in FALLBACK_MODELS:
-                try:
-                    logger.info(f"Trying text model: {model}")
-                    script_text = await self._call_huggingface_api(prompt, model)
-                    if script_text and len(script_text.strip()) > 50:
-                        logger.info(f"Script generated with: {model}")
-                        break
-                except Exception as e:
-                    err = str(e)
-                    if any(c in err for c in ["410", "404", "503", "loading"]):
-                        logger.warning(f"Model {model} unavailable: {err[:80]}")
-                        continue
-                    logger.error(f"Text gen error {model}: {err}")
-
-        if not script_text:
-            logger.warning("All HF text models failed — using rich mock template")
-            return self._generate_rich_mock_script(
-                niche, num_scenes, style, user_instructions, target_platforms
-            )
-
-        script = self._parse_script(script_text, num_scenes)
-        script = self._validate_and_fill_script(script, niche, num_scenes, style)
-
-        if video_type in ("narration", "sound_sync"):
-            script["narration"] = self._build_narration(script, voice_style)
-
-        script["hashtags"]  = self._generate_hashtags(niche, script.get("title", ""))
-        script["seo_tags"]  = self._generate_seo_tags(niche, target_platforms)
-        script["music_style"] = self._pick_music_style(niche, style)
-
-        logger.info(
-            f"Script complete: '{script.get('title')}' "
-            f"| {len(script['scenes'])} scenes | platforms={target_platforms}"
-        )
-        return script
-
-    # ─── SMART PLAN (used by /api/v1/ai/smart-plan endpoint) ─────────────────
+        raw = await self._call_ai(prompt)
+        result = self._parse_script_response(raw, niche, scene_count, video_type, platforms)
+        logger.info(f"Script generated: {result['title'][:50]} | {len(result['scenes'])} scenes")
+        return result
 
     async def smart_generate_plan(
         self,
         idea: str,
-        aspect_ratio: str = "9:16",
-        duration: int = 30,
-        style: str = "cinematic",
-        captions_enabled: bool = True,
+        aspect_ratio: str       = "9:16",
+        duration: int           = 30,
+        style: str              = "cinematic",
+        captions_enabled: bool  = True,
         background_music_enabled: bool = True,
-        audio_mode: str = "narration",
-        voice_style: str = "professional",
+        audio_mode: str         = "narration",
+        voice_style: str        = "professional",
         target_platforms: Optional[List[str]] = None,
         character_consistency: bool = False,
-        uploaded_image_count: int = 0,
+        uploaded_image_count: int   = 0,
+        reference_images: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
-        Generate a full SmartCreate plan with scenes, copy, hashtags,
-        SEO tags, and per-platform tips.
-        Called by ai_services.py /smart-plan endpoint.
+        Convert a natural language idea into a full video plan using AI.
+        When reference_images are supplied, the vision model reads them and
+        extracts subject, style, colors and setting — then injects this into
+        every scene's image_prompt so the video generator reproduces the
+        look & feel of the user's own photos.
         """
-        if target_platforms is None:
-            target_platforms = ["tiktok"]
+        platforms   = target_platforms or ["tiktok"]
+        scene_count = max(3, min(12, duration // 3))
 
-        # Detect niche from idea text
-        niche = self._detect_niche(idea)
-        num_scenes = max(3, duration // self.scene_duration)
+        # Step 1 — Vision analysis of uploaded reference images
+        image_context     = ""
+        character_desc    = ""
+        visual_style_hint = ""
 
-        # Generate the base script using user's idea as instructions
-        script = await self.generate_script(
-            niche=niche,
-            video_type=audio_mode,
-            duration=duration,
-            user_instructions=idea,
-            style=style,
+        if reference_images:
+            logger.info(f"Analyzing {len(reference_images)} reference image(s)...")
+            image_context, character_desc, visual_style_hint = \
+                await self._analyze_reference_images_detailed(reference_images)
+            logger.info(
+                f"Image analysis: subject='{character_desc[:60]}' "
+                f"style='{visual_style_hint[:60]}'"
+            )
+
+        # Step 2 — Build AI prompt with image context baked in
+        prompt = self._build_smart_plan_prompt(
+            idea=idea,
             aspect_ratio=aspect_ratio,
-            target_platforms=target_platforms,
+            duration=duration,
+            style=style,
+            audio_mode=audio_mode,
             voice_style=voice_style,
+            platforms=platforms,
+            scene_count=scene_count,
+            captions_enabled=captions_enabled,
+            image_context=image_context,
+            character_desc=character_desc,
+            visual_style_hint=visual_style_hint,
         )
 
-        # FIX 5 — build platform_tips (was missing → Platforms tab always empty)
-        platform_tips = {
-            p: PLATFORM_TIPS.get(p, {"tip": "Post consistently for best results.", "best_time": "Peak hours"})
-            for p in target_platforms
-        }
-
-        # Caption for the post (separate from in-video captions)
-        post_caption = (
-            f"{script.get('description', '')}\n\n"
-            + " ".join(script.get("hashtags", [])[:8])
+        raw    = await self._call_ai(prompt)
+        niche  = self._detect_niche(idea)
+        result = self._parse_smart_plan_response(
+            raw, idea, niche, aspect_ratio, duration, style,
+            audio_mode, voice_style, platforms, scene_count,
         )
 
-        return {
-            "title":         script.get("title"),
-            "description":   script.get("description"),
-            "niche":         niche,
-            "caption":       post_caption,
-            "caption_style": self._pick_caption_style(style),
-            "music_style":   script.get("music_style", "upbeat"),
-            # FIX 6 — scenes include caption field for frontend scene cards
-            "scenes":        script.get("scenes", []),
-            "hashtags":      script.get("hashtags", []),
-            "seo_tags":      script.get("seo_tags", []),
-            "narration":     script.get("narration"),
-            # FIX 5 — platform_tips now populated
-            "platform_tips": platform_tips,
-            "aspect_ratio":  aspect_ratio,
-            "estimated_duration": duration,
-        }
+        # Step 3 — Post-process: append character/style context to every
+        # scene's image_prompt so the image generator stays on-brand
+        if character_desc or visual_style_hint:
+            result = self._inject_image_context_into_scenes(
+                result, character_desc, visual_style_hint, character_consistency
+            )
 
-    # ─── PROMPT BUILDER ───────────────────────────────────────────────────────
+        logger.info(
+            f"Smart plan done: '{idea[:40]}' niche={niche} "
+            f"ref_images={len(reference_images) if reference_images else 0}"
+        )
+        return result
+
+    # ── PROMPT BUILDERS ───────────────────────────────────────────────────────
 
     def _build_script_prompt(
-        self,
-        niche: str,
-        video_type: str,
-        num_scenes: int,
-        user_instructions: Optional[str],
-        style: str,
-        target_platforms: List[str],
-        voice_style: str,
+        self, niche, idea, video_type, duration, style,
+        aspect_ratio, platforms, voice_style, scene_count,
+        image_context: str = "",
     ) -> str:
-
-        platforms_str = ", ".join(target_platforms) if target_platforms else "TikTok"
-        narration_note = (
-            f'Each scene must include "narration" field with {voice_style} voice text.'
-            if video_type in ("narration", "sound_sync") else ""
+        platform_str = ", ".join(p.capitalize() for p in platforms)
+        narration_instruction = (
+            f'\n- "narration": A {voice_style} voiceover line for this scene (1-2 sentences)'
+            if video_type in ("narration", "sound_sync") else
+            '\n- "narration": null'
         )
-        instructions_note = (
-            f"Creator's special instructions: {user_instructions}"
-            if user_instructions else ""
-        )
+        image_section = (
+            f"\nREFERENCE IMAGES PROVIDED BY USER:\n{image_context}\n"
+            "Use the above visual descriptions to make every image_prompt "
+            "consistent with the user's uploaded photos (same subject, style, colors).\n"
+        ) if image_context else ""
 
-        return f"""You are a professional short-form video scriptwriter for African audiences.
-Create a {style}-style video about: {niche}
-Target platforms: {platforms_str}
-{instructions_note}
+        return f"""<s>[INST] You are a professional viral video scriptwriter specializing in short-form social media content for African and global audiences.
 
-Rules:
-- Exactly {num_scenes} scenes
-- Captions max 8 words with emojis
-- Image prompts detailed and specific for AI image generation
-{narration_note}
-
-Respond ONLY with valid JSON, no markdown:
+Create a complete video script based on this idea:
+IDEA: {idea}
+NICHE: {niche}
+STYLE: {style}
+DURATION: {duration} seconds
+ASPECT RATIO: {aspect_ratio}
+TARGET PLATFORMS: {platform_str}
+AUDIO MODE: {video_type}
+SCENES NEEDED: {scene_count}
+{image_section}
+Return ONLY valid JSON in this exact format, no extra text:
 {{
-  "title": "Catchy video title with emoji",
-  "description": "One sentence description",
+  "title": "Catchy engaging title (max 60 chars)",
+  "description": "1-2 sentence description optimized for {platform_str}",
   "scenes": [
     {{
       "scene_number": 1,
-      "description": "Visual scene description",
-      "caption": "Short punchy caption with emoji",
-      "narration": "Voiceover text for this scene (if applicable)",
-      "image_prompt": "Detailed AI image prompt, {style} style, 4k, cinematic lighting"
+      "description": "Detailed visual scene description for image generation (what to show, colors, mood, action)",
+      "caption": "Short punchy caption with 1 emoji (max 8 words)",
+      "image_prompt": "Detailed AI image generation prompt for this scene"{narration_instruction},
+      "duration": 3.0
     }}
-  ]
-}}"""
+  ],
+  "hashtags": ["#hashtag1", "#hashtag2", "#hashtag3", "#hashtag4", "#hashtag5", "#hashtag6", "#hashtag7", "#hashtag8", "#hashtag9", "#hashtag10"],
+  "seo_tags": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
+  "music_style": "upbeat|calm|dramatic|inspirational|epic|lofi|afrobeat",
+  "post_caption": "Full social media post caption with hashtags for {platform_str}"
+}}
 
-    # ─── HuggingFace API ──────────────────────────────────────────────────────
+Rules:
+- All {scene_count} scenes must be unique and visually distinct
+- image_prompt must be detailed enough for AI image generation (describe lighting, mood, colors, action)
+- captions must be scroll-stopping and relatable
+- hashtags must be trending and relevant to {platform_str}
+- Include Nigerian/African context where appropriate
+[/INST]"""
 
-    async def _call_huggingface_api(self, prompt: str, model: str) -> str:
+    def _build_smart_plan_prompt(
+        self, idea, aspect_ratio, duration, style,
+        audio_mode, voice_style, platforms, scene_count,
+        captions_enabled,
+        image_context: str = "",
+        character_desc: str = "",
+        visual_style_hint: str = "",
+    ) -> str:
+        platform_str = ", ".join(p.capitalize() for p in platforms)
+        narration_note = (
+            f"Include a {voice_style} voiceover narration for each scene."
+            if audio_mode != "silent" else
+            "No narration needed — visual captions only."
+        )
+
+        # Build the reference image section if user uploaded photos
+        image_section = ""
+        if image_context or character_desc:
+            image_section = f"""
+REFERENCE IMAGES UPLOADED BY USER:
+{image_context}
+
+CHARACTER/SUBJECT DETECTED: {character_desc}
+VISUAL STYLE DETECTED: {visual_style_hint}
+
+CRITICAL: Every scene's image_prompt MUST reference the above subject and visual style.
+The video must look consistent with the user's uploaded photos.
+Describe the same subject (person/animal/object) in every image_prompt.
+"""
+
+        return f"""<s>[INST] You are a viral content strategist and video scriptwriter for African social media creators.
+
+A creator has this video idea: "{idea}"
+
+Create a complete viral video plan optimized for {platform_str}.
+{image_section}
+SPECS:
+- Duration: {duration} seconds ({scene_count} scenes)
+- Aspect ratio: {aspect_ratio}
+- Visual style: {style}
+- Audio mode: {audio_mode}
+- {narration_note}
+
+Return ONLY valid JSON (no markdown, no explanation):
+{{
+  "title": "Viral attention-grabbing title (max 60 chars, use emojis)",
+  "description": "Engaging description that makes people stop scrolling",
+  "niche": "detected niche from: animals|tech|cooking|motivation|fitness|travel|gaming|education|comedy|music|fashion|business|science|art|nature|finance|entertainment|news|general",
+  "scenes": [
+    {{
+      "scene_number": 1,
+      "description": "Vivid visual description of what happens in this scene",
+      "caption": "Punchy caption (max 8 words + 1 emoji)",
+      "image_prompt": "Detailed prompt for AI image generation: subject, setting, lighting, mood, colors, style, camera angle — MUST match reference images if provided",
+      "narration": "Voiceover text if audio_mode is not silent, else null",
+      "duration": 3.0
+    }}
+  ],
+  "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5", "#tag6", "#tag7", "#tag8", "#tag9", "#tag10"],
+  "seo_tags": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
+  "music_style": "most fitting from: upbeat|calm|dramatic|inspirational|epic|lofi|afrobeat",
+  "caption_style": "most fitting from: modern|classic|bold|minimal|fun",
+  "post_caption": "Full ready-to-post social media caption with call-to-action and hashtags",
+  "platform_tips": {{
+    "tiktok":    "Specific tip for TikTok if selected",
+    "instagram": "Specific tip for Instagram if selected",
+    "youtube":   "Specific tip for YouTube if selected"
+  }}
+}}
+
+Make every scene description and image_prompt highly specific and visually striking.
+Base everything on the creator's actual idea.
+[/INST]"""
+
+    # ── AI CALLER ─────────────────────────────────────────────────────────────
+
+    async def _call_ai(self, prompt: str) -> str:
+        """Try each HuggingFace model in order, return raw text response."""
+        if not self.api_key:
+            logger.warning("No HUGGINGFACE_API_KEY — using offline fallback")
+            return ""
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
+            "Content-Type":  "application/json",
         }
 
-        if "flan-t5" in model:
-            payload = {
-                "inputs": prompt[:512],
-                "parameters": {"max_new_tokens": 512},
-            }
+        for model in _MODELS:
+            try:
+                payload = {
+                    "inputs": prompt,
+                    "parameters": {
+                        "max_new_tokens":   1200,
+                        "temperature":      0.8,
+                        "top_p":            0.92,
+                        "do_sample":        True,
+                        "return_full_text": False,
+                        "stop":             ["[INST]", "</s>"],
+                    },
+                    "options": {
+                        "wait_for_model": True,
+                        "use_cache":      False,
+                    },
+                }
+
+                async with httpx.AsyncClient() as client:
+                    r = await client.post(
+                        f"{_HF_BASE}/{model}",
+                        headers=headers,
+                        json=payload,
+                        timeout=_TIMEOUT,
+                    )
+
+                if r.status_code == 503:
+                    logger.warning(f"{model} loading, trying next model...")
+                    continue
+                if r.status_code == 429:
+                    logger.warning(f"{model} rate-limited, trying next model...")
+                    continue
+                if r.status_code != 200:
+                    logger.warning(f"{model} returned {r.status_code}, trying next...")
+                    continue
+
+                data = r.json()
+
+                # HF returns [{"generated_text": "..."}]
+                if isinstance(data, list) and data:
+                    text = data[0].get("generated_text", "")
+                elif isinstance(data, dict):
+                    text = data.get("generated_text", "")
+                else:
+                    text = str(data)
+
+                if text and len(text) > 50:
+                    logger.info(f"AI response from {model}: {len(text)} chars")
+                    return text
+
+            except Exception as e:
+                logger.warning(f"{model} error: {e}, trying next...")
+                continue
+
+        logger.warning("All AI models failed — using offline fallback")
+        return ""
+
+    # ── VISION — REFERENCE IMAGE ANALYSIS ────────────────────────────────────
+
+    async def _analyze_reference_images_detailed(
+        self, image_sources: List[str]
+    ) -> Tuple[str, str, str]:
+        """
+        Analyze up to 6 reference images using a vision model.
+        Returns: (full_context, character_description, visual_style_hint)
+
+        image_sources can be:
+          - Cloudinary / HTTP URLs  (downloaded then base64'd)
+          - data:image/...;base64,... strings (used directly)
+          - raw base64 strings
+        """
+        captions = []
+        for src in image_sources[:6]:
+            try:
+                img_bytes = await self._load_image_bytes(src)
+                caption   = await self._call_vision_model(img_bytes)
+                if caption:
+                    captions.append(caption)
+                    logger.info(f"Image caption: {caption[:80]}")
+            except Exception as e:
+                logger.warning(f"Could not analyze image: {e}")
+                continue
+
+        if not captions:
+            return "", "", ""
+
+        # Build the full context string
+        full_context = "\n".join(
+            f"Image {i+1}: {c}" for i, c in enumerate(captions)
+        )
+
+        # Extract character/subject description (most common subject across images)
+        character_desc   = self._extract_subject(captions)
+        visual_style_hint = self._extract_visual_style(captions)
+
+        return full_context, character_desc, visual_style_hint
+
+    async def _analyze_reference_images(self, image_sources: List[str]) -> str:
+        """Simplified version — returns just the context string."""
+        ctx, _, _ = await self._analyze_reference_images_detailed(image_sources)
+        return ctx
+
+    async def _load_image_bytes(self, source: str) -> bytes:
+        """Load image as bytes from URL, data URI, or raw base64."""
+        # data URI
+        if source.startswith("data:image"):
+            b64 = source.split(",", 1)[1]
+            return base64.b64decode(b64)
+        # raw base64 (no header)
+        if not source.startswith("http"):
+            try:
+                return base64.b64decode(source)
+            except Exception:
+                pass
+        # HTTP/HTTPS URL
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            r = await client.get(source, timeout=20.0)
+            r.raise_for_status()
+            return r.content
+
+    async def _call_vision_model(self, image_bytes: bytes) -> str:
+        """
+        Call HuggingFace BLIP captioning model with image bytes.
+        Returns a natural-language description of the image.
+        """
+        if not self.api_key:
+            return self._offline_image_description(image_bytes)
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type":  "application/octet-stream",
+        }
+
+        for model in _VISION_MODELS:
+            try:
+                async with httpx.AsyncClient() as client:
+                    r = await client.post(
+                        f"{_HF_BASE}/{model}",
+                        headers=headers,
+                        content=image_bytes,
+                        timeout=30.0,
+                    )
+                if r.status_code == 503:
+                    continue   # model loading
+                if r.status_code != 200:
+                    continue
+
+                data = r.json()
+                # BLIP returns [{"generated_text": "..."}]
+                if isinstance(data, list) and data:
+                    text = data[0].get("generated_text", "")
+                elif isinstance(data, dict):
+                    text = data.get("generated_text", "") or data.get("label", "")
+                else:
+                    text = str(data)
+
+                if text and len(text) > 5:
+                    return text.strip()
+
+            except Exception as e:
+                logger.warning(f"Vision model {model} error: {e}")
+                continue
+
+        return self._offline_image_description(image_bytes)
+
+    def _offline_image_description(self, image_bytes: bytes) -> str:
+        """Fallback when vision API is unavailable — infer from file size/type."""
+        size_kb = len(image_bytes) / 1024
+        if size_kb > 500:
+            return "High-resolution photo with detailed subject and professional lighting"
+        elif size_kb > 100:
+            return "Clear photo showing a subject in natural setting"
         else:
-            payload = {
-                "inputs": f"[INST] {prompt} [/INST]",
-                "parameters": {
-                    "max_new_tokens": 1500,
-                    "temperature": 0.7,
-                    "top_p": 0.9,
-                    "return_full_text": False,
-                    "stop": ["</s>", "[INST]"],
-                },
-                "options": {"wait_for_model": False, "use_cache": True},
-            }
+            return "Image showing a subject for reference"
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{self.api_base}/{model}",
-                headers=headers,
-                json=payload,
-                timeout=60.0,
+    def _extract_subject(self, captions: List[str]) -> str:
+        """
+        Extract the most likely subject/character from image captions.
+        Looks for nouns that appear consistently across multiple captions.
+        """
+        if not captions:
+            return ""
+
+        # Common subjects to look for
+        subjects = {
+            "person":   ["person", "man", "woman", "girl", "boy", "people", "human", "face", "someone"],
+            "animal":   ["dog", "cat", "animal", "pet", "bird", "puppy", "kitten", "rabbit"],
+            "food":     ["food", "dish", "meal", "plate", "bowl", "cake", "rice", "soup"],
+            "product":  ["product", "bottle", "box", "phone", "device", "item", "object"],
+            "place":    ["room", "street", "city", "building", "outdoor", "indoor", "background"],
+        }
+
+        text = " ".join(captions).lower()
+        found = {}
+        for subject_type, keywords in subjects.items():
+            count = sum(1 for kw in keywords if kw in text)
+            if count > 0:
+                found[subject_type] = count
+
+        if not found:
+            # Return first 10 words of first caption as subject desc
+            return " ".join(captions[0].split()[:10])
+
+        primary = max(found, key=found.get)
+        # Find the actual word from the caption
+        for kw in subjects[primary]:
+            if kw in text:
+                # Get surrounding context
+                idx = text.find(kw)
+                context = text[max(0, idx-10):idx+30].strip()
+                return context
+
+        return captions[0][:60]
+
+    def _extract_visual_style(self, captions: List[str]) -> str:
+        """Extract visual style clues from image captions."""
+        text = " ".join(captions).lower()
+
+        styles = []
+        if any(w in text for w in ["dark", "black", "shadow", "night"]):
+            styles.append("dark moody lighting")
+        if any(w in text for w in ["bright", "sunny", "outdoor", "daylight"]):
+            styles.append("bright natural lighting")
+        if any(w in text for w in ["colorful", "vibrant", "colorful"]):
+            styles.append("vibrant colors")
+        if any(w in text for w in ["close", "portrait", "face"]):
+            styles.append("close-up portrait style")
+        if any(w in text for w in ["wide", "landscape", "background"]):
+            styles.append("wide shot")
+        if any(w in text for w in ["professional", "studio", "clean"]):
+            styles.append("professional studio quality")
+
+        return ", ".join(styles) if styles else "natural photography style"
+
+    def _inject_image_context_into_scenes(
+        self,
+        plan: Dict[str, Any],
+        character_desc: str,
+        visual_style_hint: str,
+        character_consistency: bool,
+    ) -> Dict[str, Any]:
+        """
+        Append the character description and visual style to every
+        scene's image_prompt so the image_generation service produces
+        visuals consistent with the user's uploaded reference photos.
+        """
+        if not character_desc and not visual_style_hint:
+            return plan
+
+        consistency_suffix = ""
+        if character_desc:
+            consistency_suffix += f", featuring {character_desc}"
+        if visual_style_hint:
+            consistency_suffix += f", {visual_style_hint}"
+        if character_consistency:
+            consistency_suffix += ", same character throughout, character consistency enabled"
+
+        scenes = plan.get("scenes", [])
+        for scene in scenes:
+            original_prompt = scene.get("image_prompt", scene.get("description", ""))
+            scene["image_prompt"] = f"{original_prompt}{consistency_suffix}"
+
+        plan["scenes"] = scenes
+        plan["character_description"] = character_desc
+        plan["visual_style"] = visual_style_hint
+        plan["reference_images_used"] = True
+        return plan
+
+    # ── RESPONSE PARSERS ──────────────────────────────────────────────────────
+
+    def _parse_script_response(
+        self, raw: str, niche: str, scene_count: int,
+        video_type: str, platforms: List[str],
+    ) -> Dict[str, Any]:
+        """Extract JSON from AI response, fall back to offline generator."""
+        data = self._extract_json(raw)
+        if data:
+            return self._validate_and_fill_script(data, niche, scene_count, video_type)
+        # AI failed or no key — use rich offline generator
+        return self._offline_generate_script(niche, scene_count, video_type, platforms)
+
+    def _parse_smart_plan_response(
+        self, raw: str, idea: str, niche: str, aspect_ratio: str,
+        duration: int, style: str, audio_mode: str, voice_style: str,
+        platforms: List[str], scene_count: int,
+    ) -> Dict[str, Any]:
+        data = self._extract_json(raw)
+        if data:
+            return self._validate_and_fill_plan(
+                data, idea, niche, aspect_ratio, duration,
+                style, audio_mode, platforms, scene_count,
             )
-            if response.status_code == 503:
-                raise Exception("503 Model is loading")
-            response.raise_for_status()
-            result = response.json()
+        return self._offline_generate_plan(
+            idea, niche, aspect_ratio, duration, style,
+            audio_mode, voice_style, platforms, scene_count,
+        )
 
-            if isinstance(result, list) and result:
-                return result[0].get("generated_text", "")
-            elif isinstance(result, dict):
-                if "error" in result:
-                    raise Exception(f"API error: {result['error']}")
-                return result.get("generated_text", str(result))
-            return str(result)
-
-    # ─── PARSING ──────────────────────────────────────────────────────────────
-
-    def _parse_script(self, text: str, expected_scenes: int) -> Dict[str, Any]:
+    def _extract_json(self, text: str) -> Optional[Dict]:
+        """Robustly extract JSON object from messy AI output."""
         if not text:
-            return {}
+            return None
 
-        try:
-            m = re.search(r'\{[\s\S]*\}', text)
-            if m:
-                return json.loads(m.group())
-        except json.JSONDecodeError:
-            pass
+        # Strip markdown code blocks
+        text = re.sub(r"```(?:json)?", "", text).strip()
 
+        # Try direct parse
         try:
-            cleaned = re.sub(r',\s*}', '}', text)
-            cleaned = re.sub(r',\s*]', ']', cleaned)
-            cleaned = cleaned.replace("'", '"')
-            m = re.search(r'\{[\s\S]*\}', cleaned)
-            if m:
-                return json.loads(m.group())
+            return json.loads(text)
         except Exception:
             pass
 
-        return self._fallback_parse_script(text, expected_scenes)
+        # Find the first { ... } block
+        start = text.find("{")
+        if start == -1:
+            return None
 
-    def _fallback_parse_script(self, text: str, num_scenes: int) -> Dict[str, Any]:
-        lines = text.strip().split("\n")
-        script: Dict[str, Any] = {
-            "title": "Generated Video", "description": "AI-generated content", "scenes": []
-        }
-        current_scene: Optional[Dict] = None
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            low = line.lower()
-            if low.startswith("title:"):
-                script["title"] = line.split(":", 1)[1].strip()
-            elif low.startswith("description:"):
-                script["description"] = line.split(":", 1)[1].strip()
-            elif re.match(r'^scene\s*\d+', low) and ":" in line:
-                if current_scene:
-                    script["scenes"].append(current_scene)
-                current_scene = {
-                    "scene_number": len(script["scenes"]) + 1,
-                    "description": line.split(":", 1)[1].strip(),
-                    "caption": "", "image_prompt": "",
-                }
-            elif current_scene:
-                if low.startswith("caption:"):
-                    current_scene["caption"] = line.split(":", 1)[1].strip()
-                elif low.startswith("image prompt:") or low.startswith("prompt:"):
-                    current_scene["image_prompt"] = line.split(":", 1)[1].strip()
-                elif low.startswith("narration:"):
-                    current_scene["narration"] = line.split(":", 1)[1].strip()
-        if current_scene:
-            script["scenes"].append(current_scene)
-        return script
+        # Walk forward tracking brace depth
+        depth = 0
+        for i, ch in enumerate(text[start:], start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start:i + 1]
+                    try:
+                        return json.loads(candidate)
+                    except Exception:
+                        # Try fixing common AI JSON mistakes
+                        fixed = re.sub(r",\s*([}\]])", r"\1", candidate)  # trailing commas
+                        fixed = re.sub(r'(\w)"(\w)', r"\1'\2", fixed)     # smart quotes
+                        try:
+                            return json.loads(fixed)
+                        except Exception:
+                            pass
+        return None
 
     def _validate_and_fill_script(
-        self,
-        script: Dict[str, Any],
-        niche: str,
-        num_scenes: int,
-        style: str,
+        self, data: Dict, niche: str, scene_count: int, video_type: str
     ) -> Dict[str, Any]:
-        if not script.get("title"):
-            script["title"] = f"Amazing {niche.title()} Content 🔥"
-        if not script.get("description"):
-            script["description"] = f"Discover amazing {niche} moments"
-        if not script.get("scenes"):
-            script["scenes"] = []
+        """Ensure all required fields exist and scenes are properly structured."""
+        scenes = data.get("scenes", [])
 
-        while len(script["scenes"]) < num_scenes:
-            i = len(script["scenes"]) + 1
-            script["scenes"].append({
-                "scene_number": i,
-                "description": f"Engaging {niche} scene {i}",
-                "caption": "Watch this! 🔥",
-                "image_prompt": (
-                    f"High quality {style} image for {niche} content, "
-                    f"scene {i}, professional, detailed, 4k"
-                ),
+        # Ensure correct scene count
+        while len(scenes) < scene_count:
+            n = len(scenes) + 1
+            scenes.append({
+                "scene_number": n,
+                "description":  f"Scene {n}: Engaging visual moment",
+                "caption":      f"Scene {n} 🎬",
+                "image_prompt": f"Cinematic {niche} scene {n}, vibrant colors, high quality",
+                "narration":    f"Scene {n} narration." if video_type != "silent" else None,
+                "duration":     3.0,
             })
 
-        for i, scene in enumerate(script["scenes"]):
-            scene["scene_number"] = i + 1
-            if not scene.get("description"):
-                scene["description"] = f"Scene {i + 1}: {niche} moment"
-            if not scene.get("caption"):
-                scene["caption"] = "Amazing! 🎯"
-            if not scene.get("image_prompt"):
-                scene["image_prompt"] = (
-                    f"{style} style, {scene['description']}, high quality, 4k"
-                )
+        # Ensure each scene has required fields
+        for i, s in enumerate(scenes):
+            s.setdefault("scene_number",  i + 1)
+            s.setdefault("description",   f"Scene {i+1}")
+            s.setdefault("caption",       f"Scene {i+1} 🎬")
+            s.setdefault("image_prompt",  s.get("description", f"Scene {i+1}"))
+            s.setdefault("narration",     None)
+            s.setdefault("duration",      3.0)
 
-        script["scenes"] = script["scenes"][:num_scenes]
-        return script
+        return {
+            "title":        data.get("title",       f"Amazing {niche.capitalize()} Video"),
+            "description":  data.get("description", f"Engaging {niche} content"),
+            "scenes":       scenes[:scene_count],
+            "narration":    data.get("narration"),
+            "hashtags":     data.get("hashtags",    self._default_hashtags(niche)),
+            "seo_tags":     data.get("seo_tags",    [niche, "viral", "trending"]),
+            "music_style":  data.get("music_style", "upbeat"),
+            "post_caption": data.get("post_caption", ""),
+        }
 
-    # ─── MOCK SCRIPT ──────────────────────────────────────────────────────────
-
-    def _generate_rich_mock_script(
-        self,
-        niche: str,
-        num_scenes: int,
-        style: str,
-        user_instructions: Optional[str] = None,
-        target_platforms: Optional[List[str]] = None,
+    def _validate_and_fill_plan(
+        self, data: Dict, idea: str, niche: str, aspect_ratio: str,
+        duration: int, style: str, audio_mode: str,
+        platforms: List[str], scene_count: int,
     ) -> Dict[str, Any]:
-        template = MOCK_TEMPLATES.get(niche.lower(), MOCK_TEMPLATES["motivation"])
-        title    = template["titles"][0]
-        if user_instructions:
-            title = f"{title} — {user_instructions[:40]}"
+        filled = self._validate_and_fill_script(
+            data, niche, scene_count,
+            video_type=audio_mode,
+        )
+        filled["niche"]          = data.get("niche", niche)
+        filled["caption_style"]  = data.get("caption_style", "modern")
+        filled["music_style"]    = data.get("music_style", "upbeat")
+        filled["post_caption"]   = data.get("post_caption", "")
+        filled["platform_tips"]  = data.get("platform_tips", self._default_platform_tips(platforms))
+        filled["aspect_ratio"]   = aspect_ratio
+        filled["duration"]       = duration
+        return filled
+
+    # ── OFFLINE FALLBACK GENERATOR ────────────────────────────────────────────
+    # Rich, idea-aware content generated without any API calls.
+    # Far better than generic mock templates — uses the user's actual words.
+
+    def _offline_generate_script(
+        self, niche: str, scene_count: int,
+        video_type: str, platforms: List[str],
+    ) -> Dict[str, Any]:
+        """Rich offline script based on niche."""
+        scenes = self._niche_scenes(niche, scene_count, video_type)
+        return {
+            "title":        self._niche_title(niche),
+            "description":  self._niche_description(niche),
+            "scenes":       scenes,
+            "narration":    None,
+            "hashtags":     self._default_hashtags(niche),
+            "seo_tags":     [niche, "viral", "trending", "africa", "content"],
+            "music_style":  self._niche_music(niche),
+            "post_caption": self._niche_caption(niche),
+        }
+
+    def _offline_generate_plan(
+        self, idea: str, niche: str, aspect_ratio: str, duration: int,
+        style: str, audio_mode: str, voice_style: str,
+        platforms: List[str], scene_count: int,
+    ) -> Dict[str, Any]:
+        """
+        Offline plan that actually uses the user's idea words to generate
+        contextually relevant content — not generic templates.
+        """
+        idea_words = idea.lower().split()
+        title      = self._idea_title(idea, niche)
+        scenes     = self._idea_scenes(idea, niche, scene_count, audio_mode, voice_style)
+
+        return {
+            "title":         title,
+            "description":   f"Engaging {niche} content: {idea[:80]}",
+            "niche":         niche,
+            "scenes":        scenes,
+            "hashtags":      self._idea_hashtags(idea, niche, platforms),
+            "seo_tags":      self._idea_seo_tags(idea, niche),
+            "music_style":   self._niche_music(niche),
+            "caption_style": self._idea_caption_style(idea),
+            "post_caption":  self._idea_post_caption(idea, niche, platforms),
+            "platform_tips": self._default_platform_tips(platforms),
+            "aspect_ratio":  aspect_ratio,
+            "duration":      duration,
+        }
+
+    # ── IDEA-AWARE HELPERS ────────────────────────────────────────────────────
+
+    def _idea_title(self, idea: str, niche: str) -> str:
+        idea_clean = idea.strip().rstrip(".,!")
+        emojis = {
+            "animals": "🐾", "comedy": "😂", "fitness": "💪",
+            "cooking": "🍳", "tech": "💻", "motivation": "🔥",
+            "travel": "✈️", "gaming": "🎮", "music": "🎵",
+            "fashion": "👗", "finance": "💰", "education": "📚",
+        }
+        emoji = emojis.get(niche, "⭐")
+        return f"{idea_clean[:50].title()} {emoji}"
+
+    def _idea_scenes(
+        self, idea: str, niche: str, count: int,
+        audio_mode: str, voice_style: str,
+    ) -> List[Dict]:
+        """
+        Generate scenes that are contextually tied to the user's idea.
+        Extracts key visual concepts from the idea text.
+        """
+        # Extract key concepts from the idea
+        keywords = [w for w in idea.lower().split()
+                    if len(w) > 3 and w not in
+                    {"with", "that", "this", "from", "have", "will", "your", "their"}]
+
+        niche_visuals = {
+            "animals":    ["close-up of expressive animal face", "animal playing or reacting", "animal interaction with human", "funny animal moment", "animal in natural habitat"],
+            "comedy":     ["setup scene showing the situation", "reaction shot with exaggerated expression", "prank or surprise moment", "chaos ensuing", "final punchline reveal"],
+            "fitness":    ["dynamic workout movement", "before/after transformation", "motivational push scene", "correct form demonstration", "victory celebration"],
+            "cooking":    ["fresh ingredients laid out", "cooking action shot", "sizzling pan close-up", "plating the dish", "first bite reaction"],
+            "tech":       ["device screen reveal", "feature demonstration", "comparison shot", "reaction to new tech", "life-changing moment"],
+            "motivation": ["struggle scene", "turning point moment", "hard work montage", "breakthrough scene", "success and celebration"],
+            "travel":     ["destination arrival shot", "local culture moment", "stunning landscape", "food or market scene", "sunset or golden hour"],
+        }
+
+        templates = niche_visuals.get(niche, [
+            f"Opening hook related to: {idea[:30]}",
+            f"Main content showing: {idea[:30]}",
+            "Supporting visual evidence",
+            "Audience engagement moment",
+            "Call-to-action closing scene",
+        ])
 
         scenes = []
-        for i in range(num_scenes):
-            desc, caption = template["scenes"][i % len(template["scenes"])]
+        captions = self._idea_captions(idea, niche, count)
+        narrations = self._idea_narrations(idea, niche, count, voice_style) if audio_mode != "silent" else [None] * count
+
+        for i in range(count):
+            template = templates[i % len(templates)]
+            keyword  = keywords[i % len(keywords)] if keywords else niche
+
+            scenes.append({
+                "scene_number": i + 1,
+                "description":  f"{template} — incorporating '{keyword}' from user's concept",
+                "caption":      captions[i],
+                "image_prompt": (
+                    f"{template}, {niche} theme, {keyword} focus, "
+                    f"vibrant professional photography, dramatic lighting, "
+                    f"ultra-detailed, social media optimized, 4K quality"
+                ),
+                "narration":    narrations[i],
+                "duration":     3.0,
+            })
+
+        return scenes
+
+    def _idea_captions(self, idea: str, niche: str, count: int) -> List[str]:
+        hooks = {
+            "animals":    ["Wait for it... 🐾", "I can't stop watching 😭", "This is too cute 🥹", "Pure chaos 😂", "They really did this 💀", "Animals > Humans 🐶"],
+            "comedy":     ["I'm deceased 💀", "This is so wrong 😂", "Nobody was ready 😭", "The audacity 😤", "Plot twist 👀", "We're not okay 😂"],
+            "fitness":    ["Day 1 starts NOW 🔥", "No excuses 💪", "This hits different 😤", "The gains are real 💯", "Swipe for the secret 👇", "Results don't lie 🏆"],
+            "cooking":    ["You NEED to try this 🍳", "Chef mode activated 👨‍🍳", "Easiest recipe ever 🔥", "5 minutes only ⏱️", "My grandma's secret 🤫", "Rate this dish 👇"],
+            "motivation": ["This changed my life 🔥", "Stop scrolling, watch 👀", "Hard truth incoming 💯", "Your sign to start 🌟", "No more excuses 💪", "Write this down ✍️"],
+        }
+        captions = hooks.get(niche, [f"Scene {i+1} 🎬" for i in range(count)])
+        result = []
+        for i in range(count):
+            result.append(captions[i % len(captions)])
+        return result
+
+    def _idea_narrations(
+        self, idea: str, niche: str, count: int, voice_style: str
+    ) -> List[Optional[str]]:
+        """Generate contextual narration lines based on the idea."""
+        styles = {
+            "professional":  ["Here's what you need to know:", "Let me show you", "The key thing here is", "Watch carefully as", "This is important:"],
+            "friendly":      ["Okay so get this!", "You won't believe this but", "I had to share this with you!", "Check this out!", "This is so cool —"],
+            "dramatic":      ["Everything changed when...", "In that moment...", "Nothing was ever the same.", "What happened next shocked everyone.", "The truth finally revealed..."],
+            "energetic":     ["LET'S GO!", "This is INSANE!", "You HAVE to see this!", "No way this is real!", "GAME CHANGER RIGHT HERE!"],
+            "calm":          ["Take a moment to notice...", "Simply beautiful.", "Just breathe and observe.", "There's something special here.", "Quietly powerful."],
+            "authoritative": ["Studies confirm:", "The data is clear:", "Experts agree:", "The results speak:", "Evidence shows:"],
+        }
+        openers = styles.get(voice_style, styles["professional"])
+        idea_short = idea[:40].rstrip(".,!")
+        narrations = []
+        for i in range(count):
+            opener = openers[i % len(openers)]
+            narrations.append(f"{opener} {idea_short}, scene {i+1}.")
+        return narrations
+
+    def _idea_hashtags(self, idea: str, niche: str, platforms: List[str]) -> List[str]:
+        base = self._default_hashtags(niche)
+        # Extract hashtaggable words from the idea
+        idea_tags = [
+            f"#{w.strip('.,!?').capitalize()}"
+            for w in idea.split()
+            if len(w) > 4 and w.isalpha()
+        ][:3]
+        platform_tags = {
+            "tiktok":    ["#TikTok", "#FYP", "#ForYou", "#Viral"],
+            "instagram": ["#Instagram", "#Reels", "#ExploreMore"],
+            "youtube":   ["#YouTubeShorts", "#Shorts"],
+            "facebook":  ["#Facebook", "#FacebookReels"],
+        }
+        p_tags = []
+        for p in platforms:
+            p_tags.extend(platform_tags.get(p, [])[:2])
+
+        all_tags = list(dict.fromkeys(base + idea_tags + p_tags))
+        return all_tags[:15]
+
+    def _idea_seo_tags(self, idea: str, niche: str) -> List[str]:
+        words = [w.strip(".,!?").lower() for w in idea.split() if len(w) > 3]
+        base  = [niche, "viral content", "trending", "social media", "short video"]
+        return list(dict.fromkeys(words[:3] + base))[:8]
+
+    def _idea_post_caption(self, idea: str, niche: str, platforms: List[str]) -> str:
+        hashtags = " ".join(self._idea_hashtags(idea, niche, platforms)[:8])
+        return f"{idea.strip()} 🔥\n\n{hashtags}\n\n👇 Share with someone who needs to see this!"
+
+    def _idea_caption_style(self, idea: str) -> str:
+        idea_l = idea.lower()
+        if any(w in idea_l for w in ["funny", "comedy", "prank", "joke", "chaos"]):
+            return "fun"
+        if any(w in idea_l for w in ["motivat", "inspire", "hustle", "grind", "boss"]):
+            return "bold"
+        if any(w in idea_l for w in ["calm", "relax", "peace", "minimal", "clean"]):
+            return "minimal"
+        return "modern"
+
+    # ── NICHE HELPERS ─────────────────────────────────────────────────────────
+
+    def _detect_niche(self, text: str) -> str:
+        text_l = text.lower()
+        mapping = {
+            "animals":     ["animal", "pet", "dog", "cat", "bird", "puppy", "kitten", "wildlife"],
+            "comedy":      ["funny", "comedy", "prank", "joke", "laugh", "chaos", "reaction", "meme"],
+            "fitness":     ["gym", "workout", "fitness", "muscle", "exercise", "weight", "abs"],
+            "cooking":     ["food", "recipe", "cook", "eat", "meal", "jollof", "suya", "kitchen"],
+            "tech":        ["tech", "phone", "app", "software", "ai", "gadget", "computer"],
+            "motivation":  ["motivat", "inspire", "success", "hustle", "goal", "mindset", "dream"],
+            "travel":      ["travel", "trip", "tour", "explore", "vacation", "lagos", "abuja"],
+            "gaming":      ["game", "gaming", "gamer", "play", "esport", "stream"],
+            "music":       ["music", "song", "beat", "sing", "rap", "afrobeat", "artist"],
+            "fashion":     ["fashion", "style", "outfit", "wear", "clothes", "ootd"],
+            "finance":     ["money", "invest", "crypto", "wealth", "income", "naira", "salary"],
+            "education":   ["learn", "study", "teach", "tips", "facts", "how to", "tutorial"],
+            "nature":      ["nature", "forest", "ocean", "mountain", "plant", "environment"],
+            "business":    ["business", "startup", "brand", "entrepreneur", "market", "sales"],
+        }
+        for niche, keywords in mapping.items():
+            if any(kw in text_l for kw in keywords):
+                return niche
+        return "general"
+
+    def _niche_title(self, niche: str) -> str:
+        return {
+            "animals":     "Adorable Animal Moments That Will Melt Your Heart 🐾",
+            "comedy":      "This Had Me Crying Laughing 😂",
+            "fitness":     "Transform Your Body With This Routine 💪",
+            "cooking":     "This Recipe Will Change Your Life 🍳",
+            "tech":        "This Tech Will Blow Your Mind 💻",
+            "motivation":  "Watch This When You Feel Like Giving Up 🔥",
+            "travel":      "Hidden Gems You Need to Visit ✈️",
+            "gaming":      "This Gaming Moment Is Unreal 🎮",
+            "music":       "This Beat Is Everything 🎵",
+            "fashion":     "Outfit Ideas That Always Hit 👗",
+            "finance":     "How I Made Money While Sleeping 💰",
+            "education":   "Facts That Will Blow Your Mind 📚",
+        }.get(niche, "You Won't Believe This ⭐")
+
+    def _niche_description(self, niche: str) -> str:
+        return f"Engaging {niche} content for the African audience 🌍"
+
+    def _niche_music(self, niche: str) -> str:
+        return {
+            "animals": "upbeat", "comedy": "upbeat", "fitness": "energetic",
+            "cooking": "upbeat", "tech": "upbeat", "motivation": "inspirational",
+            "travel": "upbeat", "gaming": "epic", "music": "upbeat",
+            "fashion": "upbeat", "finance": "inspirational", "education": "calm",
+            "nature": "calm", "drama": "dramatic",
+        }.get(niche, "upbeat")
+
+    def _niche_caption(self, niche: str) -> str:
+        return f"Amazing {niche} content! 🔥 Drop a ❤️ if this helped!\n\n" + \
+               " ".join(self._default_hashtags(niche)[:6])
+
+    def _niche_scenes(
+        self, niche: str, count: int, video_type: str
+    ) -> List[Dict]:
+        templates = {
+            "animals":    ["Fluffy puppy discovering snow for the first time", "Tiny kitten chasing its tail in circles", "Baby elephant splashing water with its trunk", "Parrot perfectly mimicking human laughter", "Rabbit doing binkies in a sunny garden"],
+            "comedy":     ["Dramatic slow-motion fail in unexpected situation", "Epic reaction to surprising news", "Prank gone hilariously wrong", "Accidental chaos erupting", "Confused animal doing human things"],
+            "fitness":    ["Explosive power movement at sunrise gym", "Transformation reveal before and after", "Intense sweat-dripping workout", "Perfect form demonstration close-up", "Victory pose at workout completion"],
+            "cooking":    ["Fresh colorful ingredients arranged beautifully", "Hot oil sizzling with aromatic spices", "Chef's hands expertly plating dish", "Steam rising from perfectly cooked jollof rice", "First bite reaction of pure satisfaction"],
+            "motivation": ["Person waking up before sunrise determined", "Grinding in an empty gym alone", "Turning point breakthrough moment", "Achievement and celebration scene", "Inspiring message on screen"],
+            "travel":     ["Breathtaking landscape at golden hour", "Vibrant local market full of colors", "Trying exotic street food for first time", "Discovering a hidden scenic viewpoint", "Sunset over African savanna"],
+            "tech":       ["Unboxing latest device with excitement", "Mind-blowing feature demonstration", "Before vs after using the tech", "Futuristic interface interaction", "Satisfied user reaction shot"],
+        }
+        scenes_list = templates.get(niche, [f"Scene {i+1} visual" for i in range(count)])
+
+        scenes = []
+        for i in range(count):
+            desc = scenes_list[i % len(scenes_list)]
             scenes.append({
                 "scene_number": i + 1,
                 "description":  desc,
-                "caption":      caption,
+                "caption":      self._idea_captions("", niche, count)[i],
                 "image_prompt": (
-                    f"{style} style, {desc}, Nigerian/African aesthetic, "
-                    f"vibrant, high quality, 4k, detailed lighting"
+                    f"{desc}, {niche} photography, professional studio lighting, "
+                    f"ultra sharp, vibrant colors, social media optimized, 8K quality"
                 ),
+                "narration":    f"Scene {i+1}." if video_type != "silent" else None,
+                "duration":     3.0,
             })
+        return scenes
 
-        hashtags   = self._generate_hashtags(niche, title)
-        seo_tags   = self._generate_seo_tags(niche, target_platforms or ["tiktok"])
-        music_style = self._pick_music_style(niche, style)
-
-        return {
-            "title":       title,
-            "description": f"Engaging {niche} content for the African audience",
-            "scenes":      scenes,
-            "hashtags":    hashtags,
-            "seo_tags":    seo_tags,
-            "music_style": music_style,
+    def _default_hashtags(self, niche: str) -> List[str]:
+        base = ["#Viral", "#FYP", "#Trending", "#Africa", "#Nigeria", "#Content"]
+        niche_tags = {
+            "animals":    ["#Animals", "#Pets", "#CutePets", "#FunnyAnimals", "#PetLovers"],
+            "comedy":     ["#Comedy", "#Funny", "#Laugh", "#Memes", "#Humor"],
+            "fitness":    ["#Fitness", "#Gym", "#Workout", "#FitLife", "#Gains"],
+            "cooking":    ["#Food", "#Cooking", "#Recipe", "#FoodLovers", "#Foodie"],
+            "tech":       ["#Tech", "#Technology", "#Gadgets", "#Innovation", "#AI"],
+            "motivation": ["#Motivation", "#Hustle", "#Success", "#Mindset", "#Goals"],
+            "travel":     ["#Travel", "#Explore", "#Adventure", "#Wanderlust", "#Tourism"],
+            "finance":    ["#Finance", "#Money", "#Investment", "#Wealth", "#Business"],
+            "music":      ["#Music", "#Afrobeat", "#NewMusic", "#Artist", "#Vibes"],
+            "fashion":    ["#Fashion", "#Style", "#OOTD", "#Outfit", "#Fashionista"],
         }
+        return list(dict.fromkeys(niche_tags.get(niche, ["#Viral"]) + base))[:12]
 
-    # ─── HELPERS ──────────────────────────────────────────────────────────────
-
-    def _build_narration(self, script: Dict[str, Any], voice_style: str) -> str:
-        """Build full narration string from scene descriptions."""
-        scenes = script.get("scenes", [])
-        parts  = []
-        for scene in scenes:
-            text = scene.get("narration") or scene.get("description", "")
-            # FIX 3 — preserve spaces, only strip emojis and special chars
-            clean = re.sub(r'[^\w\s,!?.\'-]', '', text).strip()
-            if clean:
-                parts.append(clean)
-        return ". ".join(parts) + "."
-
-    def _generate_hashtags(self, niche: str, title: str) -> List[str]:
-        base = NICHE_HASHTAGS.get(niche.lower(), NICHE_HASHTAGS["general"]).copy()
-        base.extend(NIGERIA_HASHTAGS[:2])
-        for word in re.sub(r'[^\w\s]', '', title.lower()).split():
-            if len(word) > 4 and f"#{word}" not in base:
-                base.append(f"#{word}")
-            if len(base) >= 12:
-                break
-        return base[:12]
-
-    def _generate_seo_tags(
-        self, niche: str, platforms: List[str]
-    ) -> List[str]:
-        base = [niche, "video", "content", "creator", "africa", "nigeria"]
-        for p in platforms:
-            base.append(p)
-        return list(dict.fromkeys(base))[:10]  # deduplicate
-
-    def _pick_music_style(self, niche: str, style: str) -> str:
-        mapping = {
-            "motivation": "inspirational", "fitness": "upbeat",
-            "cooking": "calm",            "travel": "upbeat",
-            "comedy": "upbeat",           "gaming": "epic",
-            "tech": "dramatic",           "news": "dramatic",
-            "music": "upbeat",            "finance": "calm",
+    def _default_platform_tips(self, platforms: List[str]) -> Dict[str, str]:
+        tips = {
+            "tiktok":    "Post between 7–9 PM WAT for maximum reach. Use trending sounds.",
+            "instagram": "Add to Reels with a strong first frame. Post to Stories too.",
+            "youtube":   "Write a keyword-rich description. Add chapters for retention.",
+            "facebook":  "Upload natively (not shared from TikTok) for more reach.",
+            "twitter":   "Keep under 2:20. Add captions — 85% watch without sound.",
+            "linkedin":  "Add professional context in the caption. Tag relevant people.",
         }
-        return mapping.get(niche.lower(), "upbeat")
-
-    def _pick_caption_style(self, style: str) -> str:
-        mapping = {
-            "cinematic": "modern", "cartoon": "fun",
-            "realistic": "classic", "dramatic": "bold",
-            "minimal": "minimal", "funny": "fun",
-        }
-        return mapping.get(style, "modern")
-
-    def _detect_niche(self, idea: str) -> str:
-        """Detect content niche from free-text idea string."""
-        idea_lower = idea.lower()
-        keywords = {
-            "animals":   ["animal", "pet", "dog", "cat", "lion", "elephant", "wildlife"],
-            "cooking":   ["cook", "recipe", "food", "jollof", "suya", "meal", "kitchen"],
-            "tech":      ["tech", "ai", "robot", "gadget", "phone", "computer", "innovation"],
-            "fitness":   ["workout", "gym", "fitness", "exercise", "muscle", "health", "body"],
-            "travel":    ["travel", "trip", "vacation", "explore", "tour", "adventure", "lagos", "nigeria"],
-            "gaming":    ["game", "gaming", "gamer", "play", "stream", "esport"],
-            "comedy":    ["funny", "comedy", "laugh", "meme", "joke", "humor"],
-            "music":     ["music", "song", "afrobeats", "artist", "concert", "beat"],
-            "fashion":   ["fashion", "style", "outfit", "cloth", "ankara", "slay"],
-            "finance":   ["money", "invest", "finance", "wealth", "business", "income"],
-            "motivation":["motivat", "inspire", "success", "goal", "dream", "hustle"],
-            "education": ["learn", "study", "fact", "school", "knowledge", "educat"],
-            "news":      ["news", "breaking", "current", "today", "politic", "government"],
-        }
-        for niche, words in keywords.items():
-            if any(w in idea_lower for w in words):
-                return niche
-        return "general"
+        return {p: tips[p] for p in platforms if p in tips}
