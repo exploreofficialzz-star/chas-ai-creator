@@ -974,16 +974,24 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
   // GENERATED PLAN
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // GENERATED PLAN
+  // FIX — TabBarView inside SingleChildScrollView causes a silent Flutter
+  // layout exception → blank gray screen. Replaced with IndexedStack +
+  // manual tab buttons so there is no nested scrollable conflict.
+  // ─────────────────────────────────────────────────────────────────────────
+
   Widget _buildGeneratedPlan() {
-    final plan        = _generatedPlan!;
-    final scenes      = (plan['scenes']       as List?) ?? [];
-    final hashtags    = (plan['hashtags']     as List?) ?? [];
-    final seoTags     = (plan['seo_tags']     as List?) ?? [];
+    final plan         = _generatedPlan!;
+    final scenes       = (plan['scenes']       as List?) ?? [];
+    final hashtags     = (plan['hashtags']     as List?) ?? [];
+    final seoTags      = (plan['seo_tags']     as List?) ?? [];
     final platformTips = (plan['platform_tips'] as Map?) ?? {};
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // ── Header ────────────────────────────────────────────────────────
         Row(
           children: [
             Icon(Icons.auto_awesome,
@@ -1006,41 +1014,33 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
           ],
         ),
         SizedBox(height: 12.h),
+
+        // ── Tab bar (manual — no TabBarView, no scroll conflict) ──────────
         Container(
           decoration: BoxDecoration(
             color: Theme.of(context).cardColor,
             borderRadius: BorderRadius.circular(12.r),
           ),
-          child: TabBar(
-            controller: _tabController,
-            indicatorSize: TabBarIndicatorSize.tab,
-            indicator: BoxDecoration(
-              color: AppTheme.primaryColor,
-              borderRadius: BorderRadius.circular(10.r),
-            ),
-            labelColor: Colors.white,
-            unselectedLabelColor: Colors.grey,
-            labelStyle: TextStyle(
-                fontSize: 12.sp, fontWeight: FontWeight.w600),
-            tabs: const [
-              Tab(text: '🎬 Scenes'),
-              Tab(text: '🏷️ Copy'),
-              Tab(text: '📱 Platforms'),
+          child: Row(
+            children: [
+              _buildTabButton(0, '🎬 Scenes'),
+              _buildTabButton(1, '🏷️ Copy'),
+              _buildTabButton(2, '📱 Platforms'),
             ],
           ),
         ),
         SizedBox(height: 12.h),
-        SizedBox(
-          height: 380.h,
-          child: TabBarView(
-            controller: _tabController,
-            children: [
-              _buildScenesTab(plan, scenes),
-              _buildCopyTab(plan, hashtags, seoTags),
-              _buildPlatformsTab(platformTips),
-            ],
-          ),
+
+        // ── Tab content — IndexedStack, no fixed height, no nested scroll ─
+        IndexedStack(
+          index: _tabController.index,
+          children: [
+            _buildScenesTab(plan, scenes),
+            _buildCopyTab(plan, hashtags, seoTags),
+            _buildPlatformsTab(platformTips),
+          ],
         ),
+
         SizedBox(height: 20.h),
         CustomButton(
           text: _isCreating
@@ -1053,199 +1053,208 @@ class _SmartCreateScreenState extends State<SmartCreateScreen>
         CustomButton(
           text: '✏️ Edit idea',
           isOutlined: true,
-          onPressed: () =>
-              setState(() => _generatedPlan = null),
+          onPressed: () => setState(() => _generatedPlan = null),
         ),
       ],
     );
   }
 
-  Widget _buildScenesTab(Map plan, List scenes) {
-    return SingleChildScrollView(
-      child: Column(
-        children: [
-          Container(
-            padding: EdgeInsets.all(16.w),
-            decoration: BoxDecoration(
-              gradient: AppTheme.primaryGradient,
-              borderRadius: BorderRadius.circular(16.r),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  plan['title'] ?? 'Untitled',
-                  style: TextStyle(
-                    fontSize: 16.sp,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                ),
-                SizedBox(height: 6.h),
-                Text(
-                  plan['description'] ?? '',
-                  style: TextStyle(
-                      fontSize: 12.sp, color: Colors.white70),
-                ),
-                SizedBox(height: 10.h),
-                Wrap(
-                  spacing: 6.w,
-                  children: [
-                    _planBadge(
-                        Icons.category, plan['niche'] ?? ''),
-                    _planBadge(Icons.music_note,
-                        plan['music_style'] ?? ''),
-                    _planBadge(Icons.mic, _audioMode.label),
-                  ],
-                ),
-              ],
+  /// Tab button that drives _tabController.index via setState
+  Widget _buildTabButton(int index, String label) {
+    final selected = _tabController.index == index;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _tabController.index = index),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          margin: EdgeInsets.all(4.w),
+          padding: EdgeInsets.symmetric(vertical: 10.h),
+          decoration: BoxDecoration(
+            color: selected ? AppTheme.primaryColor : Colors.transparent,
+            borderRadius: BorderRadius.circular(10.r),
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 12.sp,
+              fontWeight: FontWeight.w600,
+              color: selected ? Colors.white : Colors.grey,
             ),
           ),
-          SizedBox(height: 10.h),
-          Text('${scenes.length} Scenes',
-              style: Theme.of(context)
-                  .textTheme
-                  .labelMedium
-                  ?.copyWith(color: Colors.grey)),
-          SizedBox(height: 8.h),
-          ...scenes.asMap().entries.map((e) => _buildSceneCard(
-              e.key + 1, e.value as Map<String, dynamic>)),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildCopyTab(
-      Map plan, List hashtags, List seoTags) {
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _copySection(
-            '📝 Trending Title',
-            plan['title'] ?? '',
-            onCopy: () =>
-                _copyToClipboard(plan['title'] ?? ''),
+  Widget _buildScenesTab(Map plan, List scenes) {
+    // No SingleChildScrollView — already inside outer scroll
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: EdgeInsets.all(16.w),
+          decoration: BoxDecoration(
+            gradient: AppTheme.primaryGradient,
+            borderRadius: BorderRadius.circular(16.r),
           ),
-          SizedBox(height: 12.h),
-          _copySection(
-            '📄 Caption / Description',
-            plan['caption'] ?? plan['description'] ?? '',
-            onCopy: () => _copyToClipboard(
-                plan['caption'] ??
-                    plan['description'] ??
-                    ''),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                plan['title'] ?? 'Untitled',
+                style: TextStyle(
+                  fontSize: 16.sp,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+              SizedBox(height: 6.h),
+              Text(
+                plan['description'] ?? '',
+                style: TextStyle(
+                    fontSize: 12.sp, color: Colors.white70),
+              ),
+              SizedBox(height: 10.h),
+              Wrap(
+                spacing: 6.w,
+                children: [
+                  _planBadge(Icons.category, plan['niche'] ?? ''),
+                  _planBadge(Icons.music_note, plan['music_style'] ?? ''),
+                  _planBadge(Icons.mic, _audioMode.label),
+                ],
+              ),
+            ],
           ),
-          SizedBox(height: 12.h),
-          _buildTagsSection('🔥 Hashtags', hashtags,
-              color: AppTheme.primaryColor),
-          SizedBox(height: 12.h),
-          _buildTagsSection('🔍 SEO Tags', seoTags,
-              color: AppTheme.accentColor),
-        ],
-      ),
+        ),
+        SizedBox(height: 10.h),
+        Text('${scenes.length} Scenes',
+            style: Theme.of(context)
+                .textTheme
+                .labelMedium
+                ?.copyWith(color: Colors.grey)),
+        SizedBox(height: 8.h),
+        ...scenes.asMap().entries.map((e) {
+          final raw = e.value;
+          final scene = raw is Map<String, dynamic>
+              ? raw
+              : Map<String, dynamic>.from(raw as Map);
+          return _buildSceneCard(e.key + 1, scene);
+        }),
+      ],
+    );
+  }
+
+  Widget _buildCopyTab(Map plan, List hashtags, List seoTags) {
+    // No SingleChildScrollView — already inside outer scroll
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _copySection(
+          '📝 Trending Title',
+          plan['title'] ?? '',
+          onCopy: () => _copyToClipboard(plan['title'] ?? ''),
+        ),
+        SizedBox(height: 12.h),
+        _copySection(
+          '📄 Post Caption',
+          plan['post_caption'] ?? plan['description'] ?? '',
+          onCopy: () => _copyToClipboard(
+              plan['post_caption'] ?? plan['description'] ?? ''),
+        ),
+        SizedBox(height: 12.h),
+        _buildTagsSection('🔥 Hashtags', hashtags,
+            color: AppTheme.primaryColor),
+        SizedBox(height: 12.h),
+        _buildTagsSection('🔍 SEO Tags', seoTags,
+            color: AppTheme.accentColor),
+      ],
     );
   }
 
   Widget _buildPlatformsTab(Map platformTips) {
     if (platformTips.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.info_outline,
-                color: Colors.grey, size: 32.w),
-            SizedBox(height: 8.h),
-            Text(
-              'Select platforms above\nto see optimization tips',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  color: Colors.grey, fontSize: 13.sp),
-            ),
-          ],
+      return Padding(
+        padding: EdgeInsets.symmetric(vertical: 24.h),
+        child: Center(
+          child: Column(
+            children: [
+              Icon(Icons.info_outline, color: Colors.grey, size: 32.w),
+              SizedBox(height: 8.h),
+              Text(
+                'Select platforms above\nto see optimization tips',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey, fontSize: 13.sp),
+              ),
+            ],
+          ),
         ),
       );
     }
 
-    return SingleChildScrollView(
-      child: Column(
-        // FIX 1 — was TargetPlatform.values, now VideoPlatform.values
-        children: VideoPlatform.values
-            .where((p) => _targetPlatforms.contains(p))
-            .map((p) {
-          final tips =
-              platformTips[p.name] as Map? ?? {};
-          return Container(
-            margin: EdgeInsets.only(bottom: 10.h),
-            padding: EdgeInsets.all(14.w),
-            decoration: BoxDecoration(
-              color: Theme.of(context).cardColor,
-              borderRadius: BorderRadius.circular(12.r),
-              border: Border.all(
-                  color:
-                      AppTheme.primaryColor.withOpacity(0.1)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+    // No SingleChildScrollView — already inside outer scroll
+    // FIX: backend returns tips as plain strings, not nested maps
+    return Column(
+      children: VideoPlatform.values
+          .where((p) => _targetPlatforms.contains(p))
+          .map((p) {
+        final tipValue = platformTips[p.name];
+        final tipText  = tipValue is String
+            ? tipValue
+            : (tipValue is Map ? tipValue['tip']?.toString() : null)
+                ?? 'Optimized for ${p.label}';
+
+        return Container(
+          margin: EdgeInsets.only(bottom: 10.h),
+          padding: EdgeInsets.all(14.w),
+          decoration: BoxDecoration(
+            color: Theme.of(context).cardColor,
+            borderRadius: BorderRadius.circular(12.r),
+            border: Border.all(
+                color: AppTheme.primaryColor.withOpacity(0.1)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(p.icon, style: TextStyle(fontSize: 22.sp)),
+              SizedBox(width: 12.w),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(p.icon,
-                        style: TextStyle(fontSize: 18.sp)),
-                    SizedBox(width: 8.w),
-                    Text(p.label,
-                        style: TextStyle(
-                            fontSize: 14.sp,
-                            fontWeight: FontWeight.bold)),
-                    const Spacer(),
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                          horizontal: 8.w, vertical: 3.h),
-                      decoration: BoxDecoration(
-                        color:
-                            Colors.green.withOpacity(0.1),
-                        borderRadius:
-                            BorderRadius.circular(8.r),
-                      ),
-                      child: Text(
-                        p.bestRatio,
-                        style: TextStyle(
-                          fontSize: 10.sp,
-                          color: Colors.green,
-                          fontWeight: FontWeight.w600,
+                    Row(
+                      children: [
+                        Text(p.label,
+                            style: TextStyle(
+                                fontSize: 14.sp,
+                                fontWeight: FontWeight.bold)),
+                        const Spacer(),
+                        Container(
+                          padding: EdgeInsets.symmetric(
+                              horizontal: 8.w, vertical: 3.h),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8.r),
+                          ),
+                          child: Text(p.bestRatio,
+                              style: TextStyle(
+                                  fontSize: 10.sp,
+                                  color: Colors.green,
+                                  fontWeight: FontWeight.w600)),
                         ),
-                      ),
+                      ],
                     ),
+                    SizedBox(height: 6.h),
+                    Text(tipText,
+                        style: TextStyle(
+                            fontSize: 12.sp, color: Colors.grey)),
                   ],
                 ),
-                if (tips['tip'] != null) ...[
-                  SizedBox(height: 8.h),
-                  Text(tips['tip'].toString(),
-                      style: TextStyle(
-                          fontSize: 12.sp,
-                          color: Colors.grey)),
-                ],
-                if (tips['best_time'] != null) ...[
-                  SizedBox(height: 6.h),
-                  Row(
-                    children: [
-                      Icon(Icons.schedule,
-                          size: 13.w, color: Colors.orange),
-                      SizedBox(width: 4.w),
-                      Text(
-                        'Best time: ${tips['best_time']}',
-                        style: TextStyle(
-                            fontSize: 11.sp,
-                            color: Colors.orange),
-                      ),
-                    ],
-                  ),
-                ],
-              ],
-            ),
-          );
-        }).toList(),
-      ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
     );
   }
 
