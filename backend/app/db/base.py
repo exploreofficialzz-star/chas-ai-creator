@@ -36,6 +36,9 @@ FIXES:
 7. Added create_tables() helper used by main.py lifespan to ensure
    tables exist on first deploy without running a separate migration.
    Also added health_check() for the /health endpoint.
+
+8. CRITICAL — Added 'engine' export that main.py expects. Uses a class
+   with __getattr__ to lazy-load the real engine on first access.
 """
 
 import logging
@@ -54,7 +57,7 @@ class Base(DeclarativeBase):
 
 
 # Module-level singletons — populated lazily by get_engine()
-_engine  = None
+_engine = None
 _Session = None
 
 
@@ -79,7 +82,7 @@ def get_engine():
     is_sqlite = url.startswith("sqlite")
 
     # FIX 6 — safe defaults if pool settings missing from config
-    pool_size   = getattr(settings, "DATABASE_POOL_SIZE",    5)
+    pool_size = getattr(settings, "DATABASE_POOL_SIZE", 5)
     max_overflow = getattr(settings, "DATABASE_MAX_OVERFLOW", 10)
 
     if is_sqlite:
@@ -101,6 +104,46 @@ def get_engine():
 
     logger.info(f"Database engine created: {url[:30]}...")
     return _engine
+
+
+# FIX 8 — Create a property-like object that main.py can import as 'engine'
+# but which lazily calls get_engine() on first access
+class _EngineProxy:
+    """Proxy that loads the real engine on first attribute access."""
+    _real_engine = None
+    
+    def _get_real(self):
+        if self._real_engine is None:
+            self._real_engine = get_engine()
+        return self._real_engine
+    
+    def __getattr__(self, name):
+        return getattr(self._get_real(), name)
+    
+    def __setattr__(self, name, value):
+        if name in ('_real_engine',):
+            super().__setattr__(name, value)
+        else:
+            setattr(self._get_real(), name, value)
+    
+    def __call__(self, *args, **kwargs):
+        return self._get_real()(*args, **kwargs)
+    
+    def __eq__(self, other):
+        return self._get_real() == other
+    
+    def __hash__(self):
+        return hash(self._get_real())
+    
+    def __str__(self):
+        return str(self._get_real())
+    
+    def __repr__(self):
+        return repr(self._get_real())
+
+
+# This is what main.py imports: from app.db.base import engine
+engine = _EngineProxy()
 
 
 def get_session_factory() -> sessionmaker:
@@ -146,8 +189,8 @@ def create_tables() -> None:
     import app.models.video    # noqa: F401
     import app.models.payment  # noqa: F401
 
-    engine = get_engine()
-    Base.metadata.create_all(bind=engine)
+    real_engine = get_engine()
+    Base.metadata.create_all(bind=real_engine)
     logger.info("Database tables verified / created.")
 
 
@@ -157,8 +200,8 @@ def health_check() -> bool:
     Returns True if the DB is reachable, False otherwise.
     """
     try:
-        engine = get_engine()
-        with engine.connect() as conn:
+        real_engine = get_engine()
+        with real_engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         return True
     except Exception as e:
