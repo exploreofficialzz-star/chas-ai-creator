@@ -207,12 +207,13 @@ class SmartPlanRequest(BaseModel):
     style:                   str       = "cinematic"
     captions_enabled:        bool      = True
     background_music_enabled: bool     = True
-    # FIX 4 — added missing fields from SmartCreateScreen
     audio_mode:              str       = "narration"
     voice_style:             str       = "professional"
     target_platforms:        List[str] = ["tiktok"]
     character_consistency:   bool      = False
     uploaded_image_count:    int       = 0
+    # URLs or base64 strings of user-uploaded reference images
+    reference_images:        List[str] = []
 
 
 # ─── SCRIPT ───────────────────────────────────────────────────────────────────
@@ -469,12 +470,12 @@ async def smart_generate_plan(
             style=request.style,
             captions_enabled=request.captions_enabled,
             background_music_enabled=request.background_music_enabled,
-            # FIX 4 — new params now passed through
             audio_mode=request.audio_mode,
             voice_style=request.voice_style,
             target_platforms=request.target_platforms,
             character_consistency=request.character_consistency,
             uploaded_image_count=request.uploaded_image_count,
+            reference_images=request.reference_images or [],
         )
 
         logger.info(
