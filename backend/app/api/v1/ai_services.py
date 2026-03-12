@@ -71,6 +71,31 @@ _TIER_AI_LIMITS = {
     "enterprise": 9999,
 }
 
+def _normalize_audio_mode(raw: str) -> str:
+    """
+    Normalize audio_mode from any Flutter/Dart serialization to snake_case.
+    Flutter AudioMode enum serializes as: "soundSync", "sound sync",
+    "Sound Sync", "SoundSync" — all must map to "sound_sync".
+    Same for narration / silent variants.
+    """
+    normalized = raw.strip().lower().replace(" ", "_").replace("-", "_")
+    # camelCase → snake_case (soundSync → sound_sync, aiNarration → ai_narration)
+    import re
+    normalized = re.sub(r'([a-z])([A-Z])', r'\1_\2', raw).lower()
+    normalized = normalized.replace(" ", "_").replace("-", "_")
+    # Aliases
+    alias = {
+        "sound_sync":   "sound_sync",
+        "soundsync":    "sound_sync",
+        "sound sync":   "sound_sync",
+        "ai_narration": "narration",
+        "ainarration":  "narration",
+        "narration":    "narration",
+        "silent":       "silent",
+    }
+    return alias.get(normalized.replace("_", "").replace(" ", ""), normalized)
+
+
 VALID_NICHES = [
     "animals", "tech", "cooking", "motivation", "fitness", "travel",
     "gaming", "education", "comedy", "music", "fashion", "business",
@@ -199,6 +224,9 @@ async def generate_script(
     db: Session = Depends(get_db),
 ):
     """Generate a video script from niche, style, and settings."""
+
+    # Normalize video_type — same Flutter camelCase issue as audio_mode
+    request.video_type = _normalize_audio_mode(request.video_type)
 
     # Validation
     if request.niche not in VALID_NICHES:
@@ -402,6 +430,9 @@ async def smart_generate_plan(
     platform_tips, narration, and post caption.
     """
 
+    # Normalize audio_mode BEFORE validation — Flutter sends "soundSync" not "sound_sync"
+    request.audio_mode = _normalize_audio_mode(request.audio_mode)
+
     # FIX 3 / FIX 4 — validate all new fields
     if not request.idea or not request.idea.strip():
         raise ValidationException(
@@ -464,8 +495,16 @@ async def smart_generate_plan(
     except ValidationException:
         raise
     except Exception as e:
-        logger.error(f"Smart plan failed: {e}")
-        raise AIServiceException("Failed to generate video plan. Please try again.")
+        import traceback
+        logger.error(f"Smart plan CRASH: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+        # Surface real error in development, generic message in production
+        from app.config import settings as _cfg
+        debug = getattr(_cfg, "DEBUG", False)
+        raise AIServiceException(
+            f"Smart plan error: {type(e).__name__}: {str(e)}"
+            if debug else
+            "Failed to generate video plan. Please try again."
+        )
 
 
 # ─── REFERENCE DATA ───────────────────────────────────────────────────────────
@@ -638,4 +677,3 @@ async def ai_health_check():
             if hf_status != "ok" else None
         ),
     }
-
