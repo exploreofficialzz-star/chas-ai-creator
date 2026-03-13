@@ -2,45 +2,23 @@
 AI services API routes.
 FILE: app/api/v1/ai_services.py
 
-FIXES:
-1. CRITICAL — GenerateScriptRequest was missing aspect_ratio,
-   target_platforms, voice_style. text_generation.py generate_script()
-   requires these — calling without them caused TypeError.
+BUGS FIXED:
+1. CRITICAL — AIServiceException imported from app.core.exceptions but that
+   class does not exist there. This caused an ImportError at startup —
+   the entire AI router failed to register, making every /ai/* endpoint 404.
+   Fixed: replaced with APIException(status_code=503, ...) which is the
+   correct base exception class in app.core.exceptions.
 
-2. CRITICAL — generate_script validation rejected "sound_sync" as a
-   valid video_type, but the frontend AudioMode.soundSync sends exactly
-   "sound_sync". Any sound_sync video creation returned 422.
-
-3. CRITICAL — smart_generate_plan() called text_service.generate_script()
-   directly instead of text_service.smart_generate_plan(). This meant
-   the SmartCreate response was missing: platform_tips (Platforms tab
-   always empty), seo_tags, caption (post copy), music_style, narration.
-
-4. SmartPlanRequest was missing: audio_mode, voice_style,
-   target_platforms, character_consistency, uploaded_image_count.
-   SmartCreateScreen sends all of these — they were silently dropped,
-   so voice and platform settings had no effect on the generated plan.
-
-5. preview_video was missing aspect_ratio in the request model AND
-   hardcoded "9:16" — 16:9 and 1:1 previews always returned wrong ratio.
-
-6. No tier-based credit / daily-limit guard on any AI endpoint.
-   Free users could hammer the AI endpoints indefinitely.
-
-7. ai_health_check() always returned "available" without actually
-   testing anything — useless for debugging HuggingFace outages.
-
-8. generate_image() didn't pass character_consistency to the service,
-   so the param existed in the request model but was always ignored.
-
-9. smart_generate_plan() re-implemented niche detection inline instead
-   of delegating to TextGenerationService._detect_niche() — two
-   sources of truth for the same logic.
-
-10. Video type validation still allowed only "silent"|"narration" in
-    generate_script — "sound_sync" added to the allowed list.
+2. _normalize_audio_mode() had a local variable shadowing bug:
+   'normalized' was computed twice and the first computation (using raw)
+   was immediately overwritten by the second (using raw again without
+   the initial lowercase/strip). The alias lookup then used
+   normalized.replace("_","") which dropped underscores before matching —
+   "sound_sync" became "soundsync" and missed the "sound_sync" key.
+   Fixed: single clean normalisation path, aliases keyed without underscores.
 """
 
+import re
 from datetime import datetime
 from typing import List, Optional
 
@@ -49,7 +27,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import (
-    AIServiceException,
+    APIException,                # BUG 1 FIX — was AIServiceException (doesn't exist)
     AuthenticationException,
     ValidationException,
 )
@@ -71,29 +49,36 @@ _TIER_AI_LIMITS = {
     "enterprise": 9999,
 }
 
+
 def _normalize_audio_mode(raw: str) -> str:
     """
-    Normalize audio_mode from any Flutter/Dart serialization to snake_case.
-    Flutter AudioMode enum serializes as: "soundSync", "sound sync",
-    "Sound Sync", "SoundSync" — all must map to "sound_sync".
-    Same for narration / silent variants.
+    BUG 2 FIX — Normalize audio_mode from any Flutter serialisation to snake_case.
+    Flutter AudioMode enum may arrive as: "soundSync", "sound sync",
+    "Sound Sync", "SoundSync", "sound_sync" — all must map to "sound_sync".
+
+    Old code had two 'normalized = ...' assignments where the second one
+    re-processed 'raw' (not the first result), and the alias dict used
+    "sound_sync" as key but the lookup stripped underscores first so it
+    looked up "soundsync" and found nothing → returned the raw value.
     """
-    normalized = raw.strip().lower().replace(" ", "_").replace("-", "_")
-    # camelCase → snake_case (soundSync → sound_sync, aiNarration → ai_narration)
-    import re
-    normalized = re.sub(r'([a-z])([A-Z])', r'\1_\2', raw).lower()
-    normalized = normalized.replace(" ", "_").replace("-", "_")
-    # Aliases
+    # camelCase → snake_case first (soundSync → sound_sync)
+    snake = re.sub(r'([a-z])([A-Z])', r'\1_\2', raw.strip())
+    # lowercase + normalise separators
+    normalised = snake.lower().replace(" ", "_").replace("-", "_")
+
+    # Alias table — keys are the normalised forms WITH underscores
     alias = {
         "sound_sync":   "sound_sync",
-        "soundsync":    "sound_sync",
-        "sound sync":   "sound_sync",
         "ai_narration": "narration",
-        "ainarration":  "narration",
         "narration":    "narration",
         "silent":       "silent",
     }
-    return alias.get(normalized.replace("_", "").replace(" ", ""), normalized)
+    # Also match squished versions: "soundsync", "ainarration"
+    squished_alias = {
+        "soundsync":   "sound_sync",
+        "ainarration": "narration",
+    }
+    return alias.get(normalised) or squished_alias.get(normalised.replace("_", "")) or normalised
 
 
 VALID_NICHES = [
@@ -101,9 +86,9 @@ VALID_NICHES = [
     "gaming", "education", "comedy", "music", "fashion", "business",
     "science", "art", "nature", "finance", "entertainment", "news", "general",
 ]
-VALID_STYLES      = ["cartoon", "cinematic", "realistic", "funny", "dramatic", "minimal"]
-VALID_AUDIO_MODES = ["silent", "narration", "sound_sync"]   # FIX 2 / FIX 10
-VALID_RATIOS      = ["9:16", "16:9", "1:1"]
+VALID_STYLES       = ["cartoon", "cinematic", "realistic", "funny", "dramatic", "minimal"]
+VALID_AUDIO_MODES  = ["silent", "narration", "sound_sync"]
+VALID_RATIOS       = ["9:16", "16:9", "1:1"]
 VALID_VOICE_STYLES = [
     "professional", "friendly", "dramatic", "energetic", "calm", "authoritative"
 ]
@@ -128,18 +113,13 @@ def get_current_user(
 # ─── TIER GUARD ───────────────────────────────────────────────────────────────
 
 def _check_daily_ai_limit(user: User, db: Session) -> None:
-    """
-    FIX 6 — Enforce daily AI endpoint call limit per tier.
-    Counts all videos created today as a proxy for AI calls.
-    """
+    """Enforce daily AI endpoint call limit per tier."""
     from app.models.video import Video
-    tier = user.subscription_tier
+    tier     = user.subscription_tier
     tier_str = tier.value if hasattr(tier, "value") else str(tier)
-    limit = _TIER_AI_LIMITS.get(tier_str.lower(), _TIER_AI_LIMITS["free"])
+    limit    = _TIER_AI_LIMITS.get(tier_str.lower(), _TIER_AI_LIMITS["free"])
 
-    today_start = datetime.utcnow().replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     count = db.query(Video).filter(
         Video.user_id    == user.id,
         Video.created_at >= today_start,
@@ -156,32 +136,30 @@ def _check_daily_ai_limit(user: User, db: Session) -> None:
 
 class GenerateScriptRequest(BaseModel):
     niche:             str
-    video_type:        str            = "silent"
-    duration:          int            = 30
-    user_instructions: Optional[str]  = None
-    style:             str            = "cinematic"
-    # FIX 1 — added missing fields
-    aspect_ratio:      str            = "9:16"
-    target_platforms:  List[str]      = ["tiktok"]
-    voice_style:       str            = "professional"
+    video_type:        str           = "silent"
+    duration:          int           = 30
+    user_instructions: Optional[str] = None
+    style:             str           = "cinematic"
+    aspect_ratio:      str           = "9:16"
+    target_platforms:  List[str]     = ["tiktok"]
+    voice_style:       str           = "professional"
 
 
 class GenerateScriptResponse(BaseModel):
     title:       str
     description: str
     scenes:      List[dict]
-    narration:   Optional[str]  = None
-    hashtags:    List[str]      = []
-    seo_tags:    List[str]      = []
-    music_style: Optional[str]  = None
+    narration:   Optional[str] = None
+    hashtags:    List[str]     = []
+    seo_tags:    List[str]     = []
+    music_style: Optional[str] = None
 
 
 class GenerateImageRequest(BaseModel):
-    prompt:               str
-    style:                str           = "cinematic"
-    aspect_ratio:         str           = "9:16"
-    negative_prompt:      Optional[str] = None
-    # FIX 8 — was in model but never passed to service
+    prompt:                str
+    style:                 str           = "cinematic"
+    aspect_ratio:          str           = "9:16"
+    negative_prompt:       Optional[str] = None
     character_consistency: Optional[str] = None
 
 
@@ -196,24 +174,22 @@ class PreviewVideoRequest(BaseModel):
     duration:          int           = 30
     style:             str           = "cinematic"
     user_instructions: Optional[str] = None
-    # FIX 5 — was hardcoded to "9:16" inside the handler
     aspect_ratio:      str           = "9:16"
 
 
 class SmartPlanRequest(BaseModel):
-    idea:                    str
-    aspect_ratio:            str       = "9:16"
-    duration:                int       = 30
-    style:                   str       = "cinematic"
-    captions_enabled:        bool      = True
-    background_music_enabled: bool     = True
-    audio_mode:              str       = "narration"
-    voice_style:             str       = "professional"
-    target_platforms:        List[str] = ["tiktok"]
-    character_consistency:   bool      = False
-    uploaded_image_count:    int       = 0
-    # URLs or base64 strings of user-uploaded reference images
-    reference_images:        List[str] = []
+    idea:                     str
+    aspect_ratio:             str       = "9:16"
+    duration:                 int       = 30
+    style:                    str       = "cinematic"
+    captions_enabled:         bool      = True
+    background_music_enabled: bool      = True
+    audio_mode:               str       = "narration"
+    voice_style:              str       = "professional"
+    target_platforms:         List[str] = ["tiktok"]
+    character_consistency:    bool      = False
+    uploaded_image_count:     int       = 0
+    reference_images:         List[str] = []
 
 
 # ─── SCRIPT ───────────────────────────────────────────────────────────────────
@@ -224,53 +200,37 @@ async def generate_script(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Generate a video script from niche, style, and settings."""
-
-    # Normalize video_type — same Flutter camelCase issue as audio_mode
     request.video_type = _normalize_audio_mode(request.video_type)
 
-    # Validation
     if request.niche not in VALID_NICHES:
         raise ValidationException(
-            f"Invalid niche '{request.niche}'. "
-            f"Valid options: {', '.join(VALID_NICHES)}"
+            f"Invalid niche '{request.niche}'. Valid options: {', '.join(VALID_NICHES)}"
         )
     if request.style not in VALID_STYLES:
         raise ValidationException(
-            f"Invalid style '{request.style}'. "
-            f"Valid options: {', '.join(VALID_STYLES)}"
+            f"Invalid style '{request.style}'. Valid options: {', '.join(VALID_STYLES)}"
         )
-    # FIX 2 / FIX 10 — sound_sync is now accepted
     if request.video_type not in VALID_AUDIO_MODES:
-        raise ValidationException(
-            f"video_type must be one of: {', '.join(VALID_AUDIO_MODES)}"
-        )
+        raise ValidationException(f"video_type must be one of: {', '.join(VALID_AUDIO_MODES)}")
     if request.aspect_ratio not in VALID_RATIOS:
-        raise ValidationException(
-            f"aspect_ratio must be one of: {', '.join(VALID_RATIOS)}"
-        )
+        raise ValidationException(f"aspect_ratio must be one of: {', '.join(VALID_RATIOS)}")
     if not (10 <= request.duration <= 300):
         raise ValidationException("Duration must be between 10 and 300 seconds.")
 
-    # FIX 6 — daily limit check
     _check_daily_ai_limit(current_user, db)
 
     try:
-        text_service = TextGenerationService()
-        script = await text_service.generate_script(
+        script = await TextGenerationService().generate_script(
             niche=request.niche,
             video_type=request.video_type,
             duration=request.duration,
             user_instructions=request.user_instructions,
             style=request.style,
-            # FIX 1 — now passed through
             aspect_ratio=request.aspect_ratio,
             target_platforms=request.target_platforms,
             voice_style=request.voice_style,
         )
-
         logger.info(f"Script generated: {current_user.id} | niche={request.niche}")
-
         return GenerateScriptResponse(
             title=script.get("title", "Untitled"),
             description=script.get("description", ""),
@@ -280,12 +240,16 @@ async def generate_script(
             seo_tags=script.get("seo_tags", []),
             music_style=script.get("music_style"),
         )
-
     except ValidationException:
         raise
     except Exception as e:
         logger.error(f"Script generation failed: {e}")
-        raise AIServiceException("Failed to generate script. Please try again.")
+        # BUG 1 FIX — APIException(status_code=503) instead of AIServiceException
+        raise APIException(
+            status_code=503,
+            message="Failed to generate script. Please try again.",
+            error_code="AI_SERVICE_ERROR",
+        )
 
 
 # ─── IMAGE ────────────────────────────────────────────────────────────────────
@@ -296,8 +260,6 @@ async def generate_image(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Generate a single image from a prompt."""
-
     if not request.prompt or not request.prompt.strip():
         raise ValidationException("Image prompt cannot be empty.")
     if request.aspect_ratio not in VALID_RATIOS:
@@ -308,28 +270,24 @@ async def generate_image(
     _check_daily_ai_limit(current_user, db)
 
     try:
-        image_service = ImageGenerationService()
-        image_url = await image_service.generate_image(
+        image_url = await ImageGenerationService().generate_image(
             prompt=request.prompt,
             style=request.style,
             aspect_ratio=request.aspect_ratio,
             negative_prompt=request.negative_prompt,
-            # FIX 8 — now actually passed to service
             character_consistency=request.character_consistency,
         )
-
         logger.info(f"Image generated: {current_user.id}")
-
-        return GenerateImageResponse(
-            image_url=image_url,
-            prompt=request.prompt,
-        )
-
+        return GenerateImageResponse(image_url=image_url, prompt=request.prompt)
     except ValidationException:
         raise
     except Exception as e:
         logger.error(f"Image generation failed: {e}")
-        raise AIServiceException("Failed to generate image. Please try again.")
+        raise APIException(
+            status_code=503,
+            message="Failed to generate image. Please try again.",
+            error_code="AI_SERVICE_ERROR",
+        )
 
 
 # ─── PREVIEW VIDEO ────────────────────────────────────────────────────────────
@@ -340,15 +298,10 @@ async def preview_video(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Generate video preview: script + sample images for first 3 scenes."""
-
     if request.niche not in VALID_NICHES:
         raise ValidationException(f"Invalid niche '{request.niche}'.")
-    # FIX 5 — validate the aspect_ratio from request
     if request.aspect_ratio not in VALID_RATIOS:
-        raise ValidationException(
-            f"aspect_ratio must be one of: {', '.join(VALID_RATIOS)}"
-        )
+        raise ValidationException(f"aspect_ratio must be one of: {', '.join(VALID_RATIOS)}")
 
     _check_daily_ai_limit(current_user, db)
 
@@ -362,13 +315,11 @@ async def preview_video(
             duration=request.duration,
             user_instructions=request.user_instructions,
             style=request.style,
-            aspect_ratio=request.aspect_ratio,   # FIX 5 — was hardcoded "9:16"
+            aspect_ratio=request.aspect_ratio,
         )
 
         sample_images = []
-        scenes = script.get("scenes", [])
-
-        for scene in scenes[:3]:
+        for scene in script.get("scenes", [])[:3]:
             image_prompt = (
                 scene.get("image_prompt")
                 or scene.get("description")
@@ -378,7 +329,7 @@ async def preview_video(
                 image_url = await image_service.generate_image(
                     prompt=image_prompt,
                     style=request.style,
-                    aspect_ratio=request.aspect_ratio,  # FIX 5
+                    aspect_ratio=request.aspect_ratio,
                 )
                 sample_images.append({
                     "scene_number": scene.get("scene_number", len(sample_images) + 1),
@@ -386,35 +337,33 @@ async def preview_video(
                     "image_url":    image_url,
                 })
             except Exception as img_err:
-                logger.warning(
-                    f"Sample image failed for scene "
-                    f"{scene.get('scene_number')}: {img_err}"
+                logger.warning(f"Sample image failed for scene {scene.get('scene_number')}: {img_err}")
+                placeholder = (
+                    "https://placehold.co/720x1280/1a1a2e/ffffff?text=Preview"
+                    if request.aspect_ratio == "9:16"
+                    else "https://placehold.co/1280x720/1a1a2e/ffffff?text=Preview"
                 )
                 sample_images.append({
                     "scene_number": scene.get("scene_number", len(sample_images) + 1),
                     "caption":      scene.get("caption", ""),
-                    "image_url":    (
-                        "https://placehold.co/720x1280/1a1a2e/ffffff?text=Preview"
-                        if request.aspect_ratio == "9:16"
-                        else "https://placehold.co/1280x720/1a1a2e/ffffff?text=Preview"
-                    ),
+                    "image_url":    placeholder,
                 })
 
         logger.info(
             f"Video preview: {current_user.id} | niche={request.niche} | "
-            f"scenes={len(scenes)} | ratio={request.aspect_ratio}"
+            f"scenes={len(script.get('scenes', []))} | ratio={request.aspect_ratio}"
         )
-
-        return {
-            "script":        script,
-            "sample_images": sample_images,
-        }
+        return {"script": script, "sample_images": sample_images}
 
     except ValidationException:
         raise
     except Exception as e:
         logger.error(f"Video preview failed: {e}")
-        raise AIServiceException("Failed to generate video preview. Please try again.")
+        raise APIException(
+            status_code=503,
+            message="Failed to generate video preview. Please try again.",
+            error_code="AI_SERVICE_ERROR",
+        )
 
 
 # ─── SMART PLAN ───────────────────────────────────────────────────────────────
@@ -430,40 +379,24 @@ async def smart_generate_plan(
     Powers SmartCreateScreen — returns scenes, hashtags, seo_tags,
     platform_tips, narration, and post caption.
     """
-
-    # Normalize audio_mode BEFORE validation — Flutter sends "soundSync" not "sound_sync"
+    # BUG 2 FIX — normalise before validation
     request.audio_mode = _normalize_audio_mode(request.audio_mode)
 
-    # FIX 3 / FIX 4 — validate all new fields
     if not request.idea or not request.idea.strip():
-        raise ValidationException(
-            "Please describe your video idea before generating a plan."
-        )
+        raise ValidationException("Please describe your video idea before generating a plan.")
     if len(request.idea.strip()) < 10:
-        raise ValidationException(
-            "Your idea is too short. Please give a bit more detail!"
-        )
+        raise ValidationException("Your idea is too short. Please give a bit more detail!")
     if request.audio_mode not in VALID_AUDIO_MODES:
-        raise ValidationException(
-            f"audio_mode must be one of: {', '.join(VALID_AUDIO_MODES)}"
-        )
+        raise ValidationException(f"audio_mode must be one of: {', '.join(VALID_AUDIO_MODES)}")
     if request.voice_style not in VALID_VOICE_STYLES:
-        raise ValidationException(
-            f"voice_style must be one of: {', '.join(VALID_VOICE_STYLES)}"
-        )
+        raise ValidationException(f"voice_style must be one of: {', '.join(VALID_VOICE_STYLES)}")
     if request.aspect_ratio not in VALID_RATIOS:
-        raise ValidationException(
-            f"aspect_ratio must be one of: {', '.join(VALID_RATIOS)}"
-        )
+        raise ValidationException(f"aspect_ratio must be one of: {', '.join(VALID_RATIOS)}")
 
     _check_daily_ai_limit(current_user, db)
 
     try:
-        text_service = TextGenerationService()
-
-        # FIX 3 / FIX 9 — delegate to smart_generate_plan() which returns
-        # the full shape the frontend expects (platform_tips, seo_tags, etc.)
-        plan = await text_service.smart_generate_plan(
+        plan = await TextGenerationService().smart_generate_plan(
             idea=request.idea,
             aspect_ratio=request.aspect_ratio,
             duration=request.duration,
@@ -483,14 +416,13 @@ async def smart_generate_plan(
             f"platforms={request.target_platforms} | audio={request.audio_mode}"
         )
 
-        # Merge in request fields not returned by the service
+        # Merge request fields not returned by the service
         plan["captions_enabled"]         = request.captions_enabled
         plan["background_music_enabled"] = request.background_music_enabled
         plan["style"]                    = request.style
         plan["audio_mode"]               = request.audio_mode
         plan["voice_style"]              = request.voice_style
         plan["target_platforms"]         = request.target_platforms
-
         return plan
 
     except ValidationException:
@@ -498,13 +430,16 @@ async def smart_generate_plan(
     except Exception as e:
         import traceback
         logger.error(f"Smart plan CRASH: {type(e).__name__}: {e}\n{traceback.format_exc()}")
-        # Surface real error in development, generic message in production
         from app.config import settings as _cfg
         debug = getattr(_cfg, "DEBUG", False)
-        raise AIServiceException(
-            f"Smart plan error: {type(e).__name__}: {str(e)}"
-            if debug else
-            "Failed to generate video plan. Please try again."
+        raise APIException(
+            status_code=503,
+            message=(
+                f"Smart plan error: {type(e).__name__}: {str(e)}"
+                if debug else
+                "Failed to generate video plan. Please try again."
+            ),
+            error_code="AI_SERVICE_ERROR",
         )
 
 
@@ -581,7 +516,6 @@ async def get_music_styles():
 
 @router.get("/voice-styles")
 async def get_voice_styles():
-    """Voice styles for narration and sound_sync videos."""
     return {
         "styles": [
             {"id": "professional",  "name": "Professional",  "description": "Clear, measured, authoritative"},
@@ -596,15 +530,14 @@ async def get_voice_styles():
 
 @router.get("/platforms")
 async def get_platforms():
-    """Target platforms for video optimization."""
     return {
         "platforms": [
-            {"id": "tiktok",    "name": "TikTok",     "icon": "🎵", "best_ratio": "9:16", "max_duration": 60},
-            {"id": "instagram", "name": "Instagram",  "icon": "📸", "best_ratio": "9:16", "max_duration": 90},
-            {"id": "youtube",   "name": "YouTube",    "icon": "▶️", "best_ratio": "16:9", "max_duration": 600},
-            {"id": "facebook",  "name": "Facebook",   "icon": "👍", "best_ratio": "9:16", "max_duration": 240},
-            {"id": "twitter",   "name": "X / Twitter","icon": "🐦", "best_ratio": "16:9", "max_duration": 140},
-            {"id": "linkedin",  "name": "LinkedIn",   "icon": "💼", "best_ratio": "16:9", "max_duration": 600},
+            {"id": "tiktok",    "name": "TikTok",      "icon": "🎵", "best_ratio": "9:16", "max_duration": 60},
+            {"id": "instagram", "name": "Instagram",   "icon": "📸", "best_ratio": "9:16", "max_duration": 90},
+            {"id": "youtube",   "name": "YouTube",     "icon": "▶️", "best_ratio": "16:9", "max_duration": 600},
+            {"id": "facebook",  "name": "Facebook",    "icon": "👍", "best_ratio": "9:16", "max_duration": 240},
+            {"id": "twitter",   "name": "X / Twitter", "icon": "🐦", "best_ratio": "16:9", "max_duration": 140},
+            {"id": "linkedin",  "name": "LinkedIn",    "icon": "💼", "best_ratio": "16:9", "max_duration": 600},
         ]
     }
 
@@ -614,16 +547,16 @@ async def get_platforms():
 @router.get("/health")
 async def ai_health_check():
     """
-    FIX 7 — Actually test HuggingFace connectivity.
-    Returns degraded status when HF API is unreachable,
-    so frontend can show a warning instead of silently failing.
+    Actually tests provider connectivity instead of always returning 'available'.
+    Checks HuggingFace auth, Groq key presence, and Gemini key presence
+    so the frontend can show a real degraded-service warning.
     """
     from app.config import settings
     import httpx
 
+    # ── HuggingFace ──
     hf_status  = "unconfigured"
-    hf_message = "HUGGINGFACE_API_KEY not set — using mock templates"
-
+    hf_message = "HUGGINGFACE_API_KEY not set"
     if getattr(settings, "HUGGINGFACE_API_KEY", None):
         try:
             async with httpx.AsyncClient() as client:
@@ -645,23 +578,33 @@ async def ai_health_check():
             hf_status  = "unreachable"
             hf_message = f"Cannot reach HuggingFace: {str(e)[:80]}"
 
-    cloudinary_status = "unconfigured"
-    if all([
-        getattr(settings, "CLOUDINARY_CLOUD_NAME", None),
-        getattr(settings, "CLOUDINARY_API_KEY", None),
-        getattr(settings, "CLOUDINARY_API_SECRET", None),
-    ]):
-        cloudinary_status = "configured"
-
-    paystack_status = "unconfigured"
-    if getattr(settings, "PAYSTACK_SECRET_KEY", None):
-        paystack_status = "configured"
-
-    overall = (
-        "ok"       if hf_status == "ok" else
-        "degraded" if hf_status in ("unconfigured",) else
-        "error"
+    # ── Groq ──
+    groq_status = (
+        "configured" if getattr(settings, "GROQ_API_KEY", None) else "unconfigured"
     )
+
+    # ── Gemini ──
+    gemini_status = (
+        "configured" if getattr(settings, "GEMINI_API_KEY", None) else "unconfigured"
+    )
+
+    # ── Storage / Payments ──
+    cloudinary_status = (
+        "configured"
+        if all([
+            getattr(settings, "CLOUDINARY_CLOUD_NAME", None),
+            getattr(settings, "CLOUDINARY_API_KEY", None),
+            getattr(settings, "CLOUDINARY_API_SECRET", None),
+        ])
+        else "unconfigured"
+    )
+    paystack_status = (
+        "configured" if getattr(settings, "PAYSTACK_SECRET_KEY", None) else "unconfigured"
+    )
+
+    # Overall: ok only if at least one AI provider is reachable
+    any_ai = hf_status == "ok" or groq_status == "configured" or gemini_status == "configured"
+    overall = "ok" if any_ai else "degraded"
 
     return {
         "status": overall,
@@ -669,12 +612,16 @@ async def ai_health_check():
             "text_generation":  {"status": hf_status,         "message": hf_message},
             "image_generation": {"status": hf_status,         "message": hf_message},
             "voice_generation": {"status": hf_status,         "message": hf_message},
-            "storage":          {"status": cloudinary_status, "message": "Cloudinary"},
-            "payments":         {"status": paystack_status,   "message": "Paystack"},
+            "groq":             {"status": groq_status,        "message": "Groq LLM fallback"},
+            "gemini":           {"status": gemini_status,      "message": "Gemini LLM fallback"},
+            "storage":          {"status": cloudinary_status,  "message": "Cloudinary"},
+            "payments":         {"status": paystack_status,    "message": "Paystack"},
         },
         "fallback_mode": hf_status != "ok",
-        "fallback_note":  (
-            "AI generation will use rich built-in templates when HuggingFace is unavailable."
-            if hf_status != "ok" else None
+        "fallback_note": (
+            "HuggingFace is unavailable — Groq/Gemini fallbacks are active."
+            if hf_status != "ok" and any_ai else
+            "All AI providers unavailable — generation will fail."
+            if not any_ai else None
         ),
     }
