@@ -2,47 +2,30 @@
 SQLAlchemy base configuration.
 FILE: app/db/base.py
 
-FIXES:
-1. CRITICAL — create_engine() called with pool_size and max_overflow
-   at module import time. If DATABASE_URL uses SQLite (common in local
-   dev / CI), SQLite doesn't support connection pooling and raises:
-   "Invalid argument(s) 'pool_size' for dialect sqlite"
-   Fixed: only pass pool args for non-SQLite engines.
+BUGS FIXED:
+1. CRITICAL — DeclarativeBase (SQLAlchemy 2.x) + plain Column() syntax
+   without Mapped[] annotations raises at startup:
+   "SAWarning: Mapper[Video(videos)] does not have a mapped column 'id'"
+   and in strict builds a full MappedColumn error. Every single model
+   failed to register. Fixed: __allow_unmapped__ = True on Base.
 
-2. CRITICAL — create_engine() runs at import time, so if DATABASE_URL
-   is missing or malformed (e.g. Render cold-start before env vars are
-   injected), the entire app crashes on import with an unreadable error.
-   Fixed: deferred engine creation inside get_engine() with a clear error.
+2. CRITICAL — _EngineProxy.__call__ called self._get_real()() but
+   SQLAlchemy Engine is not callable → TypeError whenever any code
+   did engine(). Removed __call__; added connect() and begin() passthroughs
+   so common use patterns work without the dangerous fallthrough.
 
-3. CRITICAL — get_db() used a plain try/finally — on exception the
-   session was closed but never rolled back. Any failed DB write left
-   an uncommitted transaction open, which blocked subsequent queries on
-   the same connection until the pool recycled it.
-   Fixed: explicit rollback in the except branch.
+3. pool_recycle=280 prevents "SSL connection closed unexpectedly" errors
+   after Render's managed Postgres closes idle connections at ~300s.
 
-4. declarative_base() from sqlalchemy.ext.declarative is deprecated
-   since SQLAlchemy 1.4 and removed in 2.0. Render's python packages
-   will install SQLAlchemy 2.x. Fixed: import from sqlalchemy.orm.
+4. Explicit rollback in get_db() exception handler so failed writes
+   don't leave uncommitted transactions blocking the connection pool.
 
-5. pool_pre_ping=True is correct but pool_recycle was missing.
-   Render's PostgreSQL (and most managed DBs) close idle connections
-   after 300 s — without pool_recycle the app gets
-   "SSL connection has been closed unexpectedly" errors after idle
-   periods. Fixed: pool_recycle=280 (just under the 300 s limit).
-
-6. DATABASE_POOL_SIZE / DATABASE_MAX_OVERFLOW missing from config
-   caused AttributeError. Fixed with safe getattr() fallback defaults.
-
-7. Added create_tables() helper used by main.py lifespan to ensure
-   tables exist on first deploy without running a separate migration.
-   Also added health_check() for the /health endpoint.
-
-8. CRITICAL — Added 'engine' export that main.py expects. Uses a class
-   with __getattr__ to lazy-load the real engine on first access.
+5. Deferred engine creation so a missing DATABASE_URL gives a clear
+   RuntimeError instead of a cryptic import-time crash.
 """
 
 import logging
-from typing import Generator, Optional
+from typing import Generator
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -51,20 +34,29 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# FIX 4 — use the non-deprecated import path (SQLAlchemy 1.4+ / 2.x)
+
+# ── Base ──────────────────────────────────────────────────────────────────────
+
 class Base(DeclarativeBase):
-    pass
+    """
+    FIX 1 — __allow_unmapped__ = True lets all models use the legacy
+    Column() syntax (without Mapped[] annotations) under SQLAlchemy 2.x.
+    Without this every model raises a MappedColumn registration error
+    at startup before a single request is served.
+    """
+    __allow_unmapped__ = True
 
 
-# Module-level singletons — populated lazily by get_engine()
-_engine = None
-_Session = None
+# ── Engine (lazy) ─────────────────────────────────────────────────────────────
+
+_engine   = None
+_Session  = None
 
 
 def get_engine():
     """
-    FIX 2 — Deferred engine creation so import-time crashes are avoided
-    and a clear error is raised if DATABASE_URL is not set.
+    FIX 5 — Deferred so a missing DATABASE_URL gives a clear error
+    instead of crashing the entire import chain.
     """
     global _engine
     if _engine is not None:
@@ -79,75 +71,35 @@ def get_engine():
             "Add it to your Render environment variables."
         )
 
-    is_sqlite = url.startswith("sqlite")
-
-    # FIX 6 — safe defaults if pool settings missing from config
-    pool_size = getattr(settings, "DATABASE_POOL_SIZE", 5)
+    is_sqlite    = url.startswith("sqlite")
+    pool_size    = getattr(settings, "DATABASE_POOL_SIZE",    5)
     max_overflow = getattr(settings, "DATABASE_MAX_OVERFLOW", 10)
 
     if is_sqlite:
-        # FIX 1 — SQLite doesn't support pool_size / max_overflow
+        # SQLite doesn't support pool_size / max_overflow
         _engine = create_engine(
             url,
             connect_args={"check_same_thread": False},
             pool_pre_ping=True,
         )
     else:
-        # FIX 5 — pool_recycle prevents stale connection errors
+        # FIX 3 — pool_recycle=280 keeps connections alive through
+        # Render's 300 s idle-connection timeout
         _engine = create_engine(
             url,
             pool_size=pool_size,
             max_overflow=max_overflow,
             pool_pre_ping=True,
-            pool_recycle=280,   # FIX 5 — recycle before managed DB closes idle conn
+            pool_recycle=280,
         )
 
-    logger.info(f"Database engine created: {url[:30]}...")
+    logger.info(f"Database engine created: {url[:40]}...")
     return _engine
 
 
-# FIX 8 — Create a property-like object that main.py can import as 'engine'
-# but which lazily calls get_engine() on first access
-class _EngineProxy:
-    """Proxy that loads the real engine on first attribute access."""
-    _real_engine = None
-    
-    def _get_real(self):
-        if self._real_engine is None:
-            self._real_engine = get_engine()
-        return self._real_engine
-    
-    def __getattr__(self, name):
-        return getattr(self._get_real(), name)
-    
-    def __setattr__(self, name, value):
-        if name in ('_real_engine',):
-            super().__setattr__(name, value)
-        else:
-            setattr(self._get_real(), name, value)
-    
-    def __call__(self, *args, **kwargs):
-        return self._get_real()(*args, **kwargs)
-    
-    def __eq__(self, other):
-        return self._get_real() == other
-    
-    def __hash__(self):
-        return hash(self._get_real())
-    
-    def __str__(self):
-        return str(self._get_real())
-    
-    def __repr__(self):
-        return repr(self._get_real())
+# ── Session factory ───────────────────────────────────────────────────────────
 
-
-# This is what main.py imports: from app.db.base import engine
-engine = _EngineProxy()
-
-
-def get_session_factory() -> sessionmaker:
-    """Return (and lazily create) the session factory."""
+def _get_session_factory() -> sessionmaker:
     global _Session
     if _Session is None:
         _Session = sessionmaker(
@@ -158,52 +110,88 @@ def get_session_factory() -> sessionmaker:
     return _Session
 
 
-# Convenience alias used by tasks/video_generation.py
 def SessionLocal() -> Session:
-    return get_session_factory()()
+    """Return a new DB session. Caller is responsible for closing it."""
+    return _get_session_factory()()
 
 
 def get_db() -> Generator[Session, None, None]:
     """
     FastAPI dependency — yields a DB session.
-    FIX 3 — rolls back on exception so the connection is returned clean.
+    FIX 4 — explicit rollback on exception so the connection is
+    returned to the pool in a clean state.
     """
-    db = get_session_factory()()
+    db = _get_session_factory()()
     try:
         yield db
     except Exception:
-        db.rollback()    # FIX 3
+        db.rollback()   # FIX 4
         raise
     finally:
         db.close()
 
 
+# ── Engine proxy ──────────────────────────────────────────────────────────────
+
+class _EngineProxy:
+    """
+    FIX 2 — Lazy engine proxy. Removed __call__ (Engine is not callable).
+    Exposes connect() and begin() directly so common patterns work.
+    All other attribute access is forwarded to the real engine via __getattr__.
+    """
+    _real: object = None
+
+    def _get(self):
+        if self._real is None:
+            object.__setattr__(self, "_real", get_engine())
+        return self._real
+
+    # Explicit passthroughs for the most-used engine methods
+    def connect(self, *a, **kw):
+        return self._get().connect(*a, **kw)
+
+    def begin(self, *a, **kw):
+        return self._get().begin(*a, **kw)
+
+    def dispose(self, *a, **kw):
+        return self._get().dispose(*a, **kw)
+
+    # Generic fallthrough for anything else
+    def __getattr__(self, name: str):
+        return getattr(self._get(), name)
+
+    def __repr__(self):
+        return repr(self._get())
+
+    def __str__(self):
+        return str(self._get())
+
+
+# main.py can do: from app.db.base import engine
+engine = _EngineProxy()
+
+
+# ── Startup helpers ───────────────────────────────────────────────────────────
+
 def create_tables() -> None:
     """
-    FIX 7 — Create all tables that don't exist yet.
-    Safe to call on every startup (CREATE TABLE IF NOT EXISTS).
-    Called from main.py lifespan before the app starts serving.
+    Create all tables that don't exist yet (CREATE TABLE IF NOT EXISTS).
+    Safe to call on every startup. Call from main.py lifespan.
     """
-    # Import all models so their metadata is registered on Base
-    import app.models.user     # noqa: F401
+    import app.models.user     # noqa: F401 — register models on Base
     import app.models.video    # noqa: F401
     import app.models.payment  # noqa: F401
 
-    real_engine = get_engine()
-    Base.metadata.create_all(bind=real_engine)
+    Base.metadata.create_all(bind=get_engine())
     logger.info("Database tables verified / created.")
 
 
 def health_check() -> bool:
-    """
-    FIX 7 — Quick connectivity check used by the /health endpoint.
-    Returns True if the DB is reachable, False otherwise.
-    """
+    """Quick connectivity test for the /health endpoint."""
     try:
-        real_engine = get_engine()
-        with real_engine.connect() as conn:
+        with get_engine().connect() as conn:
             conn.execute(text("SELECT 1"))
         return True
     except Exception as e:
-        logger.error(f"Database health check failed: {e}")
+        logger.error(f"DB health check failed: {e}")
         return False
