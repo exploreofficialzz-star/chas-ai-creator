@@ -547,7 +547,6 @@ Return ONLY this JSON:
       {nfld},
       "duration": 3.0
     }}
-    // repeat for ALL {scene_count} scenes
   ],
   "hashtags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10"],
   "seo_tags": ["kw1","kw2","kw3","kw4","kw5"],
@@ -600,7 +599,6 @@ Return ONLY valid JSON:
       "narration": "<voiceover or null>",
       "duration": 3.0
     }}
-    // ALL {scene_count} scenes
   ],
   "hashtags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10"],
   "seo_tags": ["kw1","kw2","kw3","kw4","kw5"],
@@ -649,7 +647,7 @@ def _fill_script(
         s.setdefault("narration",    None)
         s.setdefault("duration",     3.0)
     return {
-        "title":        data["title"],
+        "title":        data.get("title") or data.get("video_title") or idea[:60],
         "description":  data.get("description", ""),
         "scenes":       scenes[:scene_count],
         "narration":    data.get("narration"),
@@ -698,38 +696,121 @@ def _pad(
     return scenes
 
 
-# ── JSON extraction ───────────────────────────────────────────────────────────
 
 def _json(text: str) -> Optional[Dict]:
+    """
+    Robust JSON extractor. Handles:
+    - ```json fences and preamble prose
+    - // comments that are NOT inside string values
+    - {} inside string values (string-aware brace walker)
+    - Trailing commas, Python None/True/False
+    """
     if not text:
         return None
-    text = re.sub(r"```(?:json)?|```", "", text).strip()
+
+    # 1. Strip markdown fences
+    text = re.sub(r"```(?:json)?\s*|```", "", text).strip()
+
+    # 2. Direct parse (handles perfectly-formed responses)
     try:
         return json.loads(text)
     except Exception:
         pass
+
+    # 3. Strip // comments that are NOT inside string values, then retry
+    cleaned = _strip_js_comments(text)
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        pass
+
+    # 4. String-aware brace extraction
+    candidate = _extract_json_object(cleaned)
+    if candidate is None:
+        logger.warning(f"JSON extraction failed. Raw prefix: {text[:300]!r}")
+        return None
+
+    # 5. Final repair pass
+    candidate = _fix(candidate)
+    try:
+        return json.loads(candidate)
+    except Exception as e:
+        logger.warning(f"JSON repair failed: {e!r} | candidate: {candidate[:300]!r}")
+        return None
+
+
+def _strip_js_comments(s: str) -> str:
+    """
+    Remove // comments ONLY when outside a JSON string value.
+    The old regex re.sub(r"//[^\n]*", ...) destroyed URLs (https://...)
+    inside string values because "//" appears in every URL.
+    """
+    result = []
+    i = 0
+    in_string  = False
+    escape_next = False
+    while i < len(s):
+        ch = s[i]
+        if escape_next:
+            result.append(ch)
+            escape_next = False
+            i += 1
+            continue
+        if ch == "\\" and in_string:
+            result.append(ch)
+            escape_next = True
+            i += 1
+            continue
+        if ch == '"':
+            in_string = not in_string
+            result.append(ch)
+            i += 1
+            continue
+        if not in_string and ch == "/" and i + 1 < len(s) and s[i + 1] == "/":
+            while i < len(s) and s[i] != "\n":
+                i += 1
+            continue
+        result.append(ch)
+        i += 1
+    return "".join(result)
+
+
+def _extract_json_object(text: str) -> Optional[str]:
+    """
+    String-aware brace walker — does NOT count { } inside string values.
+    The old naive walker terminated early when image_prompt contained
+    {curly braces}, which large models (llama-3.3, GPT-4o) frequently use.
+    """
     start = text.find("{")
     if start == -1:
         return None
-    depth = end = 0
+    depth = 0
+    in_string  = False
+    escape_next = False
     for i, ch in enumerate(text[start:], start):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
         if ch == "{":
             depth += 1
         elif ch == "}":
             depth -= 1
             if depth == 0:
-                end = i
-                break
-    candidate = text[start: end + 1] if end else text[start:] + "\n}"
-    candidate = _fix(candidate)
-    try:
-        return json.loads(candidate)
-    except Exception as e:
-        logger.debug(f"JSON repair failed: {e} | {candidate[:100]}")
-        return None
+                return text[start: i + 1]
+    return text[start:] + "\n}"
 
 
 def _fix(s: str) -> str:
+    """Trailing comma removal + Python literal normalisation.
+    Does NOT strip // comments — handled by _strip_js_comments() first."""
     s = re.sub(r",\s*([}\]])", r"\1", s)
     s = re.sub(r"(?<![\\])'", '"', s)
     s = re.sub(
@@ -737,7 +818,6 @@ def _fix(s: str) -> str:
         lambda m: m.group(0).replace("\n", "\\n"), s,
     )
     s = s.replace(": None", ": null").replace(": True", ": true").replace(": False", ": false")
-    s = re.sub(r"//[^\n]*", "", s)
     return s
 
 
