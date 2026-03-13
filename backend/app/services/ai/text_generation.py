@@ -50,16 +50,33 @@ _GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
 _GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 _OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
-# HuggingFace text models  (model_id, prompt_format)
+# ── Model lists — updated March 2026 ─────────────────────────────────────────
+# HF: Qwen2.5-7B, Mistral-7B-v0.3, Zephyr-7b-beta, Phi-3.5 → 410 Gone
+#   (removed from free Serverless Inference API). Using smaller replacements.
+# Groq: llama-3.1-70b, mixtral-8x7b, gemma2-9b → 400 Decommissioned.
+# Gemini: gemini-1.5-flash, gemini-1.5-flash-8b → 404 Deprecated.
+
+# HuggingFace — smaller models still on free Serverless Inference API
 _HF_MODELS: List[Tuple[str, str]] = [
-    ("Qwen/Qwen2.5-7B-Instruct",           "chatml"),
-    ("mistralai/Mistral-7B-Instruct-v0.3", "mistral"),
-    ("HuggingFaceH4/zephyr-7b-beta",       "zephyr"),
-    ("microsoft/Phi-3.5-mini-instruct",    "chatml"),
+    ("Qwen/Qwen2.5-1.5B-Instruct",        "chatml"),   # small, reliable
+    ("microsoft/Phi-3-mini-4k-instruct",   "chatml"),   # Phi-3 (not 3.5)
+    ("google/gemma-2-2b-it",               "chatml"),   # Gemma 2 2B
+    ("mistralai/Mistral-7B-Instruct-v0.2", "mistral"),  # v0.2 (v0.3 is 410)
 ]
 
-_GROQ_MODELS   = ["llama-3.1-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it"]
-_GEMINI_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-8b"]
+# Groq — current model names as of March 2026
+_GROQ_MODELS = [
+    "llama-3.3-70b-versatile",   # replaced llama-3.1-70b-versatile
+    "llama-3.1-8b-instant",      # fast, always available
+    "llama3-8b-8192",            # legacy alias — still active
+]
+
+# Gemini — 2.0-flash is now the free-tier model (1.5 deprecated)
+_GEMINI_MODELS = [
+    "gemini-2.0-flash",       # primary — replaces 1.5-flash
+    "gemini-2.0-flash-lite",  # cheaper/faster fallback
+]
+
 _OPENAI_MODELS = ["gpt-4o-mini", "gpt-3.5-turbo"]
 
 _HF_VISION_MODELS = [
@@ -98,25 +115,37 @@ def _fmt(system: str, user: str, fmt: str) -> str:
 class TextGenerationService:
 
     def __init__(self):
-        from app.config import settings
-        self.hf_key     = getattr(settings, "HUGGINGFACE_API_KEY", "") or ""
-        self.groq_key   = getattr(settings, "GROQ_API_KEY",        "") or ""
-        self.gemini_key = getattr(settings, "GEMINI_API_KEY",      "") or ""
-        self.openai_key = getattr(settings, "OPENAI_API_KEY",      "") or ""
+        # Keys are loaded lazily via _get_keys() at call time, NOT here.
+        # Loading in __init__ causes "No API keys configured" errors when
+        # ai_services.py creates TextGenerationService() at module import
+        # time — before Render injects env vars into the process. By the
+        # time the first real request arrives the keys are available, but
+        # this stale instance has already cached empty strings for them.
+        pass
+
+    def _get_keys(self):
+        """Load API keys fresh from settings on every call chain."""
+        from app.config import get_settings
+        s = get_settings()
+        hf_key     = getattr(s, "HUGGINGFACE_API_KEY", "") or ""
+        groq_key   = getattr(s, "GROQ_API_KEY",        "") or ""
+        gemini_key = getattr(s, "GEMINI_API_KEY",      "") or ""
+        openai_key = getattr(s, "OPENAI_API_KEY",      "") or ""
 
         active = [k for k, v in {
-            "HuggingFace": self.hf_key, "Groq": self.groq_key,
-            "Gemini": self.gemini_key,  "OpenAI": self.openai_key,
+            "HuggingFace": hf_key, "Groq": groq_key,
+            "Gemini": gemini_key,  "OpenAI": openai_key,
         }.items() if v]
 
         if not active:
-            logger.error(
-                "NO AI KEYS SET — generation will fail. "
-                "Set at least one of: HUGGINGFACE_API_KEY, GROQ_API_KEY, "
-                "GEMINI_API_KEY, OPENAI_API_KEY"
+            logger.warning(
+                "No AI API keys found in settings — "
+                "set HUGGINGFACE_API_KEY, GROQ_API_KEY, or GEMINI_API_KEY"
             )
         else:
             logger.info(f"AI providers active: {', '.join(active)}")
+
+        return hf_key, groq_key, gemini_key, openai_key
 
     # ── Public methods ────────────────────────────────────────────────────────
 
@@ -198,54 +227,62 @@ class TextGenerationService:
     # ── Provider chain ────────────────────────────────────────────────────────
 
     async def _call_ai(self, system: str, user_msg: str) -> str:
+        # Load keys fresh on every call — never stale from __init__
+        hf_key, groq_key, gemini_key, openai_key = self._get_keys()
         errors: List[str] = []
 
-        if self.hf_key:
+        if hf_key:
             try:
-                t = await self._hf_text(system, user_msg)
+                t = await self._hf_text(system, user_msg, hf_key)
                 if t:
                     return t
             except Exception as e:
                 errors.append(f"HuggingFace: {e}")
 
-        if self.groq_key:
+        if groq_key:
             try:
                 t = await self._oai_compat(
-                    _GROQ_URL, self.groq_key, _GROQ_MODELS, system, user_msg, "Groq"
+                    _GROQ_URL, groq_key, _GROQ_MODELS, system, user_msg, "Groq"
                 )
                 if t:
                     return t
             except Exception as e:
                 errors.append(f"Groq: {e}")
 
-        if self.gemini_key:
+        if gemini_key:
             try:
-                t = await self._gemini_text(system, user_msg)
+                t = await self._gemini_text(system, user_msg, gemini_key)
                 if t:
                     return t
             except Exception as e:
                 errors.append(f"Gemini: {e}")
 
-        if self.openai_key:
+        if openai_key:
             try:
                 t = await self._oai_compat(
-                    _OPENAI_URL, self.openai_key, _OPENAI_MODELS, system, user_msg, "OpenAI"
+                    _OPENAI_URL, openai_key, _OPENAI_MODELS, system, user_msg, "OpenAI"
                 )
                 if t:
                     return t
             except Exception as e:
                 errors.append(f"OpenAI: {e}")
 
+        if not errors:
+            raise AIGenerationError(
+                "No AI API keys are configured. "
+                "Add GROQ_API_KEY, GEMINI_API_KEY, or HUGGINGFACE_API_KEY "
+                "to your Render environment variables."
+            )
+
         raise AIGenerationError(
-            "All AI providers are currently unavailable. Please try again shortly. "
-            f"Details: {' | '.join(errors) if errors else 'No API keys configured'}"
+            f"All AI providers failed. Errors: {' | '.join(errors)}"
         )
 
     # ── HuggingFace text ──────────────────────────────────────────────────────
 
-    async def _hf_text(self, system: str, user_msg: str) -> str:
+    async def _hf_text(self, system: str, user_msg: str, hf_key: str = "") -> str:
         headers = {
-            "Authorization": f"Bearer {self.hf_key}",
+            "Authorization": f"Bearer {hf_key or self._get_keys()[0]}",
             "Content-Type": "application/json",
         }
         for model_id, prompt_fmt in _HF_MODELS:
@@ -332,7 +369,8 @@ class TextGenerationService:
 
     # ── Gemini text ───────────────────────────────────────────────────────────
 
-    async def _gemini_text(self, system: str, user_msg: str) -> str:
+    async def _gemini_text(self, system: str, user_msg: str, gemini_key: str = "") -> str:
+        _gemini_key = gemini_key or self._get_keys()[2]
         for model in _GEMINI_MODELS:
             url     = _GEMINI_URL.format(model=model)
             payload = {
@@ -344,7 +382,7 @@ class TextGenerationService:
             }
             try:
                 async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
-                    r = await c.post(url, params={"key": self.gemini_key}, json=payload)
+                    r = await c.post(url, params={"key": _gemini_key}, json=payload)
                 if r.status_code == 429:
                     logger.warning(f"Gemini/{model} rate-limited")
                     await asyncio.sleep(2.0)
@@ -397,23 +435,24 @@ class TextGenerationService:
         return ctx
 
     async def _vision(self, img: bytes) -> str:
+        hf_key, _, gemini_key, _ = self._get_keys()
         # 1. HF vision
-        if self.hf_key:
-            t = await self._hf_vision(img)
+        if hf_key:
+            t = await self._hf_vision(img, hf_key)
             if t:
                 return t
         # 2. Gemini vision
-        if self.gemini_key:
-            t = await self._gemini_vision(img)
+        if gemini_key:
+            t = await self._gemini_vision(img, gemini_key)
             if t:
                 return t
         raise AIGenerationError(
             "No vision provider available. Set HUGGINGFACE_API_KEY or GEMINI_API_KEY."
         )
 
-    async def _hf_vision(self, img: bytes) -> str:
+    async def _hf_vision(self, img: bytes, hf_key: str = "") -> str:
         headers = {
-            "Authorization": f"Bearer {self.hf_key}",
+            "Authorization": f"Bearer {hf_key}",
             "Content-Type": "application/octet-stream",
         }
         for model in _HF_VISION_MODELS:
@@ -437,14 +476,14 @@ class TextGenerationService:
                     break
         return ""
 
-    async def _gemini_vision(self, img: bytes) -> str:
+    async def _gemini_vision(self, img: bytes, gemini_key: str = "") -> str:
         b64  = base64.b64encode(img).decode()
         mime = "image/jpeg"
         if img[:8] == b"\x89PNG\r\n\x1a\n":
             mime = "image/png"
         elif img[:4] == b"RIFF" and img[8:12] == b"WEBP":
             mime = "image/webp"
-        url     = _GEMINI_URL.format(model="gemini-1.5-flash")
+        url     = _GEMINI_URL.format(model="gemini-2.0-flash")   # updated from 1.5-flash
         payload = {
             "contents": [{"role": "user", "parts": [
                 {"text": "Describe this image: subject, setting, lighting, colours, mood. Be specific."},
@@ -454,7 +493,7 @@ class TextGenerationService:
         }
         try:
             async with httpx.AsyncClient(timeout=_VISION_TIMEOUT) as c:
-                r = await c.post(url, params={"key": self.gemini_key}, json=payload)
+                r = await c.post(url, params={"key": gemini_key}, json=payload)
             if r.status_code != 200:
                 return ""
             t = (
