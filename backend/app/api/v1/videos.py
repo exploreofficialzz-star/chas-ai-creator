@@ -2,26 +2,27 @@
 Video generation and management API routes.
 FILE: app/api/v1/videos.py
 
-BUGS FIXED IN THIS VERSION:
-1. Missing /smart-generate route — frontend calls POST /smart-generate but
-   only /generate existed. Every "Generate Video Plan" tap hit 404/405.
+BUGS FIXED:
+1. CRITICAL — video_type INSERT crash: "invalid input value for enum videotype"
+   _safe_video_type() returned a VideoType enum OBJECT. String(20) column
+   passes it to psycopg2 which calls str(obj) → PostgreSQL rejects it.
+   Fixed: _safe_video_type() now returns .value (a plain string).
+   Same fix applied to style via new _safe_style() helper.
 
-2. AIGenerationError not caught — background task swallowed the error
-   silently. User saw spinner forever. Now caught + video marked FAILED
-   with a clear message.
+2. CRITICAL — style INSERT crash: same psycopg2 enum-object issue.
+   VideoStyle(request.style) returned a VideoStyle enum OBJECT.
+   Fixed: _safe_style() always returns the .value string with fallback.
 
-3. Missing /me alias on users router — GET /api/v1/users/me returned 404
-   because only /profile existed. Added /me → /profile alias.
+3. CRITICAL — VideoStatus.PROCESSING does not exist in VideoStatus enum.
+   smart_generate_start() set video.status = VideoStatus.PROCESSING
+   → AttributeError at runtime, every "start rendering" tap raised 500.
+   Fixed: use VideoStatus.PENDING — generate_video_task advances through
+   all intermediate statuses (SCRIPT_GENERATING → … → COMPLETED) itself.
 
-4. generate_video_task called with only video_id — but the task needs
-   audio_mode, voice_style, target_platforms. These were never passed,
-   so the task regenerated with wrong defaults. Fixed: pass full config.
-
-5. VideoType enum missing "sound_sync" — caused ValueError on Video()
-   creation when audio_mode="sound_sync". Fixed with safe enum fallback.
-
-6. Background task error — errors inside generate_video_task were not
-   marking the video as FAILED in the DB. User saw "pending" forever.
+4. target_platforms stored as JSON string '["tiktok"]' instead of a list.
+   JSON/JSONB column expects a Python object. Pydantic v2 can serialise
+   List[str] to a JSON string in some request-handling paths.
+   Fixed: _safe_platforms() coerces to a Python list before Video().
 """
 
 import uuid
@@ -99,10 +100,6 @@ class CreateVideoRequest(BaseModel):
 
 
 class SmartGenerateRequest(BaseModel):
-    """
-    FIX 1 — Request model for POST /smart-generate.
-    Matches exactly what smart_create_screen.dart sends.
-    """
     idea:                           str
     aspect_ratio:                   str                 = "9:16"
     duration:                       int                 = Field(default=30, ge=10, le=300)
@@ -170,9 +167,10 @@ class ScheduleResponse(BaseModel):
 # ── Tier limits ───────────────────────────────────────────────────────────────
 
 TIER_LIMITS = {
-    "free":  {"max_duration": 30,  "daily_limit": 2,   "can_use_narration": False, "can_use_character_consistency": False, "can_use_scheduling": False, "label": "Free"},
-    "basic": {"max_duration": 60,  "daily_limit": 10,  "can_use_narration": True,  "can_use_character_consistency": False, "can_use_scheduling": True,  "label": "Basic"},
-    "pro":   {"max_duration": 300, "daily_limit": 50,  "can_use_narration": True,  "can_use_character_consistency": True,  "can_use_scheduling": True,  "label": "Pro"},
+    "free":       {"max_duration": 30,  "daily_limit": 2,   "can_use_narration": False, "can_use_character_consistency": False, "can_use_scheduling": False, "label": "Free"},
+    "basic":      {"max_duration": 60,  "daily_limit": 10,  "can_use_narration": True,  "can_use_character_consistency": False, "can_use_scheduling": True,  "label": "Basic"},
+    "pro":        {"max_duration": 300, "daily_limit": 50,  "can_use_narration": True,  "can_use_character_consistency": True,  "can_use_scheduling": True,  "label": "Pro"},
+    "enterprise": {"max_duration": 600, "daily_limit": 200, "can_use_narration": True,  "can_use_character_consistency": True,  "can_use_scheduling": True,  "label": "Enterprise"},
 }
 
 
@@ -190,10 +188,44 @@ def check_daily_limit(user: User, db: Session) -> int:
     ).count()
 
 
-def _safe_video_type(value: str) -> VideoType:
-    """FIX 5 — Safe enum conversion, never raises ValueError."""
+# ── Column value helpers — ALWAYS return plain strings, never enum objects ────
+
+def _safe_video_type(value: str) -> str:
+    """
+    BUG 1 FIX — String(20) DB column requires a plain string.
+    The old code returned VideoType(value) — an enum object.
+    psycopg2 has no adapter for VideoType so it calls str(obj) which
+    produces "<VideoType.SILENT: 'silent'>" → PostgreSQL rejects it.
+    """
     valid = {e.value for e in VideoType}
-    return VideoType(value) if value in valid else VideoType("silent")
+    return value if value in valid else VideoType.SILENT.value
+
+
+def _safe_style(value: str) -> str:
+    """
+    BUG 2 FIX — String(50) DB column requires a plain string.
+    Old code: VideoStyle(request.style) → enum object → same crash.
+    """
+    valid = {e.value for e in VideoStyle}
+    return value if value in valid else VideoStyle.CINEMATIC.value
+
+
+def _safe_platforms(value) -> list:
+    """
+    BUG 4 FIX — JSONB column requires a Python list, not a pre-serialised
+    string. Pydantic v2 can serialise List[str] to '["tiktok"]' in some
+    request-handling paths; this coerces it back to a native list.
+    """
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        import json as _json
+        try:
+            parsed = _json.loads(value)
+            return parsed if isinstance(parsed, list) else [value]
+        except Exception:
+            return [value]
+    return ["tiktok"]
 
 
 def _video_to_response(v: Video) -> VideoResponse:
@@ -202,11 +234,11 @@ def _video_to_response(v: Video) -> VideoResponse:
         title=v.title,
         description=v.description,
         niche=v.niche,
-        video_type=v.video_type.value if hasattr(v.video_type, "value") else v.video_type,
+        video_type=v.video_type.value if hasattr(v.video_type, "value") else str(v.video_type),
         duration=v.duration,
         aspect_ratio=v.aspect_ratio,
-        style=v.style.value if hasattr(v.style, "value") else v.style,
-        status=v.status.value if hasattr(v.status, "value") else v.status,
+        style=v.style.value if hasattr(v.style, "value") else str(v.style),
+        status=v.status.value if hasattr(v.status, "value") else str(v.status),
         progress=v.progress,
         video_url=v.video_url,
         thumbnail_url=v.thumbnail_url,
@@ -239,9 +271,8 @@ VALID_AUDIO_MODES = ["silent", "narration", "sound_sync"]
 
 async def _run_generation(video_id: str, db_factory):
     """
-    FIX 2 & 6 — Wraps generate_video_task so any error (including
-    AIGenerationError) marks the video FAILED in the DB with a clear
-    message instead of leaving it stuck in PENDING forever.
+    Wraps generate_video_task so any error marks the video FAILED
+    in the DB instead of leaving it stuck in PENDING forever.
     """
     db: Session = db_factory()
     try:
@@ -357,7 +388,7 @@ async def delete_schedule(
     return {"message": "✅ Schedule deleted successfully."}
 
 
-# ── Smart generate route (FIX 1) ──────────────────────────────────────────────
+# ── Smart generate ─────────────────────────────────────────────────────────────
 
 @router.post("/smart-generate")
 async def smart_generate(
@@ -367,46 +398,34 @@ async def smart_generate(
     db: Session = Depends(get_db),
 ):
     """
-    FIX 1 — This route was completely missing.
-    smart_create_screen.dart calls POST /api/v1/videos/smart-generate.
-    Returns the AI-generated video plan immediately (before video rendering
-    starts) so the frontend can show the scene list to the user.
+    Step 1 of 2 — generates the AI plan and saves scenes.
+    Returns immediately so the frontend can display the scene list.
     """
     limits     = get_tier_limits(current_user)
     tier_label = limits["label"]
 
-    # Narration gate
     if request.audio_mode == "narration" and not limits["can_use_narration"]:
         raise ValidationException(
             "🎙️ Narration is not available on the Free plan. "
             "Upgrade to Basic or Pro!"
         )
-
-    # Character consistency gate
     if request.character_consistency and not limits["can_use_character_consistency"]:
         raise ValidationException(
             "🎭 Character Consistency is a Pro-only feature. Upgrade to unlock!"
         )
-
-    # Duration gate
     if request.duration > limits["max_duration"]:
         raise ValidationException(
             f"⏱️ {tier_label} plan is limited to {limits['max_duration']}s per video."
         )
-
-    # Daily limit
     if check_daily_limit(current_user, db) >= limits["daily_limit"]:
         raise RateLimitException(
             f"📅 Daily limit of {limits['daily_limit']} videos reached. "
             "Resets at midnight UTC."
         )
 
-    # Call AI to generate the plan — raises AIGenerationError if all fail
     from app.services.ai.text_generation import TextGenerationService
-    svc = TextGenerationService()
-
     try:
-        plan = await svc.smart_generate_plan(
+        plan = await TextGenerationService().smart_generate_plan(
             idea=request.idea,
             aspect_ratio=request.aspect_ratio,
             duration=request.duration,
@@ -423,63 +442,50 @@ async def smart_generate(
         logger.error(f"Smart generate AI error: {e}")
         raise ValidationException(str(e))
 
-    # Detect niche from AI response or idea
-    niche = plan.get("niche", "general")
-
-    # Create the video record
+    # BUG 1 + 2 + 4 FIX — plain strings and Python list, never enum objects
     video = Video(
         id=str(uuid.uuid4()),
         user_id=current_user.id,
         title=plan.get("title", request.idea[:60]),
         description=plan.get("description", ""),
-        niche=niche,
-        video_type=_safe_video_type(request.audio_mode),
+        niche=plan.get("niche", "general"),
+        video_type=_safe_video_type(request.audio_mode),           # BUG 1 FIX
         duration=request.duration,
         aspect_ratio=request.aspect_ratio,
-        style=VideoStyle(request.style)
-              if request.style in {e.value for e in VideoStyle}
-              else VideoStyle("cinematic"),
+        style=_safe_style(request.style),                          # BUG 2 FIX
         character_consistency_enabled=request.character_consistency,
         captions_enabled=request.captions_enabled,
         background_music_enabled=request.background_music_enabled,
         audio_mode=request.audio_mode,
         voice_style=request.voice_style,
-        target_platforms=request.target_platforms,
+        target_platforms=_safe_platforms(request.target_platforms), # BUG 4 FIX
         user_instructions=request.idea,
         status=VideoStatus.PENDING,
         progress=0,
     )
     db.add(video)
-    db.flush()  # get video.id before scenes
+    db.flush()
 
-    # Persist the AI-generated scenes
-    for i, scene_data in enumerate(plan.get("scenes", [])):
-        scene = VideoScene(
+    for i, sd in enumerate(plan.get("scenes", [])):
+        db.add(VideoScene(
             id=str(uuid.uuid4()),
             video_id=video.id,
-            scene_number=scene_data.get("scene_number", i + 1),
-            description=scene_data.get("description", ""),
-            caption=scene_data.get("caption"),
-            narration=scene_data.get("narration"),
-            image_prompt=scene_data.get("image_prompt", ""),
-            duration=scene_data.get("duration", 3.0),
+            scene_number=sd.get("scene_number", i + 1),
+            description=sd.get("description", ""),
+            caption=sd.get("caption"),
+            narration=sd.get("narration"),
+            image_prompt=sd.get("image_prompt", ""),
+            duration=sd.get("duration", 3.0),
             status="pending",
-        )
-        db.add(scene)
+        ))
 
     db.commit()
     db.refresh(video)
-
     logger.info(
-        f"Smart plan generated: video={video.id} "
+        f"Smart plan: video={video.id} "
         f"idea='{request.idea[:40]}' scenes={len(plan.get('scenes', []))}"
     )
-
-    # Return plan + video record so the frontend can show scenes immediately
-    return {
-        "video": _video_to_response(video),
-        "plan":  plan,
-    }
+    return {"video": _video_to_response(video), "plan": plan}
 
 
 @router.post("/smart-generate/start/{video_id}")
@@ -489,10 +495,7 @@ async def smart_generate_start(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Called after user reviews the plan and taps 'Generate Video'.
-    Starts the actual rendering pipeline in the background.
-    """
+    """Step 2 of 2 — starts the actual rendering pipeline in the background."""
     video = db.query(Video).filter(
         Video.id      == video_id,
         Video.user_id == current_user.id,
@@ -502,7 +505,10 @@ async def smart_generate_start(
     if video.status not in [VideoStatus.PENDING, VideoStatus.FAILED]:
         raise ValidationException("Video is already processing or completed.")
 
-    video.status   = VideoStatus.PROCESSING
+    # BUG 3 FIX — VideoStatus.PROCESSING does not exist.
+    # Keep PENDING — generate_video_task advances through all intermediate
+    # states (SCRIPT_GENERATING → IMAGES_GENERATING → … → COMPLETED) itself.
+    video.status   = VideoStatus.PENDING
     video.progress = 0
     db.commit()
 
@@ -528,48 +534,41 @@ async def create_video(
 
     if not request.niche or not request.niche.strip():
         raise ValidationException("📌 Please select a content niche.")
-
     if request.aspect_ratio not in VALID_RATIOS:
         raise ValidationException(f"📐 Invalid aspect ratio. Choose: {', '.join(VALID_RATIOS)}.")
-
     if request.style not in VALID_STYLES:
         raise ValidationException(f"🎨 Invalid style. Choose: {', '.join(VALID_STYLES)}.")
 
     effective_type = request.audio_mode or request.video_type
     if effective_type not in VALID_AUDIO_MODES:
         raise ValidationException("🎬 Invalid audio mode. Choose: silent, narration, or sound_sync.")
-
     if request.duration > limits["max_duration"]:
         raise ValidationException(
             f"⏱️ {tier_label} plan is limited to {limits['max_duration']}s per video."
         )
-
     if check_daily_limit(current_user, db) >= limits["daily_limit"]:
         raise RateLimitException(
             f"📅 Daily limit of {limits['daily_limit']} videos reached. "
             "Resets at midnight UTC."
         )
-
     if effective_type == "narration" and not limits["can_use_narration"]:
         raise ValidationException(
             "🎙️ Narration is not available on the Free plan. Upgrade to Basic or Pro!"
         )
-
     if request.character_consistency_enabled and not limits["can_use_character_consistency"]:
         raise ValidationException("🎭 Character Consistency is a Pro-only feature.")
 
+    # BUG 1 + 2 + 4 FIX
     video = Video(
         id=str(uuid.uuid4()),
         user_id=current_user.id,
         title=request.title,
         description=request.description,
         niche=request.niche.strip(),
-        video_type=_safe_video_type(effective_type),
+        video_type=_safe_video_type(effective_type),               # BUG 1 FIX
         duration=request.duration,
         aspect_ratio=request.aspect_ratio,
-        style=VideoStyle(request.style)
-              if request.style in {e.value for e in VideoStyle}
-              else VideoStyle("cinematic"),
+        style=_safe_style(request.style),                          # BUG 2 FIX
         character_consistency_enabled=request.character_consistency_enabled,
         character_description=request.character_description,
         captions_enabled=request.captions_enabled,
@@ -582,7 +581,7 @@ async def create_video(
         scene_priority_notes=request.scene_priority_notes,
         audio_mode=request.audio_mode,
         voice_style=request.voice_style,
-        target_platforms=request.target_platforms,
+        target_platforms=_safe_platforms(request.target_platforms), # BUG 4 FIX
         status=VideoStatus.PENDING,
         progress=0,
     )
