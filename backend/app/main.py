@@ -39,7 +39,8 @@ BUGS FIXED:
    reassigned with a plain = inside the except block — Python treats
    that as a local variable in the enclosing scope, not the global one.
    The nested async def error_info() always read the original "" value.
-   Fixed: `global _router_load_error` inside the except block.
+   Fixed: Removed `global` statement (not needed at module level) and
+   assign directly to module-level variable.
 """
 
 import os
@@ -283,7 +284,8 @@ try:
     logger.info("✅ API routes registered")
 
 except Exception as e:
-    global _router_load_error          # FIX 6 — update the module-level variable
+    # FIX 6 — removed `global` statement. At module level, we can assign directly
+    # to module-level variables without global declaration.
     _router_load_error = str(e)
     logger.error(f"❌ Failed to load API routes: {e}", exc_info=True)
 
