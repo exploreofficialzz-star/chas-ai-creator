@@ -1,37 +1,6 @@
 """
 Video models.
 FILE: app/models/video.py
-
-FIXES:
-1. CRITICAL — VideoType enum only had SILENT and NARRATION.
-   Frontend sends audio_mode="sound_sync" (AudioMode.soundSync) but
-   there was no VideoType.SOUND_SYNC. The DB column rejected the value
-   and the entire video creation crashed with a DataError.
-   Fixed: added SOUND_SYNC = "sound_sync" to VideoType.
-
-2. CRITICAL — Video model had no audio_mode, voice_style, or
-   target_platforms columns. video_generation.py task reads these three
-   fields at generation time. All three raised AttributeError every time
-   a video was generated. Added all three columns.
-
-3. Video.style column type was SQLEnum(VideoStyle) — SQLAlchemy requires
-   the exact enum member. But videos.py writes style="cinematic" (a plain
-   string), causing StatementError on insert. Changed to String(50) with
-   the enum kept for validation reference only.
-
-4. Video.video_type same issue — stored as SQLEnum(VideoType) but
-   videos.py passes video_type as a string value from the request.
-   Changed to String(20) for consistency; VideoType enum kept for
-   reference and property methods.
-
-5. VideoSchedule.can_generate_today() mutated self (reset_daily_count)
-   but had no db session to commit — the reset was lost on next call.
-   Separated the check from the mutation; callers must commit after
-   calling reset_daily_count().
-
-6. to_dict() on Video was missing: audio_mode, voice_style,
-   target_platforms, status_label, hashtags, narration_text.
-   Frontend video detail screen shows all of these.
 """
 
 from datetime import datetime
@@ -74,7 +43,7 @@ class VideoType(str, Enum):
     """Reference enum — DB column uses String(20) for flexibility."""
     SILENT     = "silent"
     NARRATION  = "narration"
-    SOUND_SYNC = "sound_sync"   # FIX 1
+    SOUND_SYNC = "sound_sync"
 
 
 class VideoStyle(str, Enum):
@@ -114,13 +83,13 @@ class Video(Base):
     description = Column(Text,        nullable=True)
     niche       = Column(String(50),  nullable=False)
 
-    # FIX 3 / FIX 4 — String columns; enum kept above for isinstance checks
+    # String columns; enums kept above for isinstance checks
     video_type   = Column(String(20),  default="silent",    nullable=False)
     style        = Column(String(50),  default="cinematic", nullable=False)
     duration     = Column(Integer,     default=30,          nullable=False)
     aspect_ratio = Column(String(10),  default="9:16",      nullable=False)
 
-    # FIX 2 — new columns (were read by video_generation.py but never existed)
+    # Audio/platform columns
     audio_mode       = Column(String(20),  default="silent",       nullable=False)
     voice_style      = Column(String(50),  default="professional", nullable=False)
     target_platforms = Column(JSON,        default=lambda: ["tiktok"])
@@ -130,22 +99,22 @@ class Video(Base):
     character_description         = Column(Text,    nullable=True)
 
     # Captions
-    captions_enabled      = Column(Boolean,    default=True,    nullable=False)
-    caption_style         = Column(String(50), default="modern",nullable=False)
-    caption_color         = Column(String(20), default="white", nullable=False)
-    caption_emoji_enabled = Column(Boolean,    default=True,    nullable=False)
+    captions_enabled      = Column(Boolean,    default=True,     nullable=False)
+    caption_style         = Column(String(50), default="modern", nullable=False)
+    caption_color         = Column(String(20), default="white",  nullable=False)
+    caption_emoji_enabled = Column(Boolean,    default=True,     nullable=False)
 
     # Background music
-    background_music_enabled = Column(Boolean,    default=True,    nullable=False)
-    background_music_url     = Column(String(500), nullable=True)
-    background_music_style   = Column(String(50), default="upbeat",nullable=False)
+    background_music_enabled = Column(Boolean,     default=True,     nullable=False)
+    background_music_url     = Column(String(500),  nullable=True)
+    background_music_style   = Column(String(50),  default="upbeat", nullable=False)
 
     # User instructions
-    user_instructions   = Column(Text, nullable=True)
+    user_instructions    = Column(Text, nullable=True)
     scene_priority_notes = Column(Text, nullable=True)
 
     # Generated content
-    script        = Column(JSON, nullable=True)
+    script         = Column(JSON, nullable=True)
     narration_text = Column(Text, nullable=True)
     hashtags       = Column(JSON, default=lambda: [])
 
@@ -167,8 +136,8 @@ class Video(Base):
     download_count = Column(Integer, default=0, nullable=False)
 
     # Scheduling
-    is_scheduled  = Column(Boolean,    default=False, nullable=False)
-    scheduled_for = Column(DateTime,   nullable=True)
+    is_scheduled  = Column(Boolean,  default=False, nullable=False)
+    scheduled_for = Column(DateTime, nullable=True)
     schedule_id   = Column(
         String(36),
         ForeignKey(
@@ -238,16 +207,15 @@ class Video(Base):
         }.get(self.status, "Unknown")
 
     def to_dict(self) -> Dict[str, Any]:
-        """FIX 6 — includes audio_mode, voice_style, target_platforms, hashtags."""
         return {
             "id":          self.id,
             "title":       self.title,
             "description": self.description,
             "niche":       self.niche,
             "video_type":  self.video_type,
-            "audio_mode":  self.audio_mode,      # FIX 6
-            "voice_style": self.voice_style,     # FIX 6
-            "target_platforms": self.target_platforms or [],  # FIX 6
+            "audio_mode":  self.audio_mode,
+            "voice_style": self.voice_style,
+            "target_platforms": self.target_platforms or [],
             "duration":     self.duration,
             "aspect_ratio": self.aspect_ratio,
             "style":        self.style,
@@ -256,15 +224,15 @@ class Video(Base):
             "background_music_enabled": self.background_music_enabled,
             "background_music_style":   self.background_music_style,
             "character_consistency_enabled": self.character_consistency_enabled,
-            "status":        self.status.value,
-            "status_label":  self.status_label,  # FIX 6
+            "status":        self.status.value if hasattr(self.status, "value") else str(self.status),
+            "status_label":  self.status_label,
             "progress":      self.progress,
             "video_url":     self.video_url,
             "thumbnail_url": self.thumbnail_url,
             "file_size":     self.file_size,
             "resolution":    self.resolution,
-            "hashtags":      self.hashtags or [],  # FIX 6
-            "narration_text": self.narration_text, # FIX 6
+            "hashtags":      self.hashtags or [],
+            "narration_text": self.narration_text,
             "view_count":    self.view_count,
             "download_count":self.download_count,
             "error_message": self.error_message,
@@ -302,7 +270,8 @@ class VideoScene(Base):
     start_time = Column(Float,   nullable=True)
     end_time   = Column(Float,   nullable=True)
 
-    status        = Column(SQLEnum(SceneStatus), default=SceneStatus.PENDING, nullable=False)
+    # FIX: Use String for status column to avoid migration issues
+    status        = Column(String(20), default="pending", nullable=False)
     error_message = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -325,7 +294,7 @@ class VideoScene(Base):
             "duration":      self.duration,
             "start_time":    self.start_time,
             "end_time":      self.end_time,
-            "status":        self.status.value,
+            "status":        self.status if isinstance(self.status, str) else self.status.value,
             "error_message": self.error_message,
         }
 
@@ -344,10 +313,10 @@ class VideoSchedule(Base):
     name      = Column(String(100), nullable=True)
     is_active = Column(Boolean,     default=True, nullable=False)
 
-    frequency        = Column(String(20), default="daily",          nullable=False)
+    frequency        = Column(String(20), default="daily",             nullable=False)
     days_of_week     = Column(JSON,       default=lambda: [0,1,2,3,4,5,6])
     schedule_times   = Column(JSON,       default=lambda: [])
-    cron_expression  = Column(String(100),nullable=True)
+    cron_expression  = Column(String(100), nullable=True)
 
     video_config = Column(JSON, default=lambda: {})
 
@@ -373,10 +342,7 @@ class VideoSchedule(Base):
         return f"<VideoSchedule(id={self.id}, user={self.user_id}, active={self.is_active})>"
 
     def can_generate_today(self) -> bool:
-        """
-        FIX 5 — Pure read-only check. Does NOT mutate self.
-        Call reset_daily_count() + db.commit() separately when needed.
-        """
+        """Pure read-only check. Does NOT mutate self."""
         if not self.is_active:
             return False
         if self.videos_generated_today >= self.max_videos_per_day:
@@ -387,18 +353,17 @@ class VideoSchedule(Base):
         return True
 
     def needs_daily_reset(self) -> bool:
-        """Return True if the daily counter is stale and should be reset."""
         if not self.last_reset_at:
             return True
         return datetime.utcnow().date() > self.last_reset_at.date()
 
     def reset_daily_count(self) -> None:
-        """Reset daily count. Caller must commit the session."""
+        """Caller must commit the session."""
         self.videos_generated_today = 0
         self.last_reset_at          = datetime.utcnow()
 
     def record_generated(self, success: bool = True) -> None:
-        """Record a generation attempt. Caller must commit the session."""
+        """Caller must commit the session."""
         self.videos_generated_today += 1
         self.last_generated_at       = datetime.utcnow()
         if success:
@@ -408,10 +373,10 @@ class VideoSchedule(Base):
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "id":       self.id,
-            "name":     self.name,
-            "is_active":self.is_active,
-            "frequency":self.frequency,
+            "id":        self.id,
+            "name":      self.name,
+            "is_active": self.is_active,
+            "frequency": self.frequency,
             "days_of_week":   self.days_of_week,
             "schedule_times": self.schedule_times,
             "max_videos_per_day":     self.max_videos_per_day,
