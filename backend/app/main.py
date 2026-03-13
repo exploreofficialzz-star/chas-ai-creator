@@ -39,8 +39,7 @@ BUGS FIXED:
    reassigned with a plain = inside the except block — Python treats
    that as a local variable in the enclosing scope, not the global one.
    The nested async def error_info() always read the original "" value.
-   Fixed: Removed `global` statement (not needed at module level) and
-   assign directly to module-level variable.
+   Fixed: `global _router_load_error` inside the except block.
 """
 
 import os
@@ -256,8 +255,10 @@ async def health_check_route():   # FIX 5 — renamed to avoid collision with db
     }
 
 
-@app.get("/", tags=["Root"])
-# FIX 4 — removed @app.head("/"); FastAPI auto-handles HEAD for GET routes
+@app.api_route("/", methods=["GET", "HEAD"], tags=["Root"])
+# Explicit HEAD prevents 405 on Render health probes and load balancers
+# that send HEAD / before routing real traffic. FastAPI's auto-HEAD
+# generation is unreliable with GZipMiddleware in some Starlette versions.
 async def root():
     return {
         "app":         settings.APP_NAME,
@@ -284,8 +285,7 @@ try:
     logger.info("✅ API routes registered")
 
 except Exception as e:
-    # FIX 6 — removed `global` statement. At module level, we can assign directly
-    # to module-level variables without global declaration.
+    global _router_load_error          # FIX 6 — update the module-level variable
     _router_load_error = str(e)
     logger.error(f"❌ Failed to load API routes: {e}", exc_info=True)
 
