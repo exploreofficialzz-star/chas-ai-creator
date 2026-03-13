@@ -178,16 +178,6 @@ class Payment(Base):
     user = relationship("User", back_populates="payments")
     plan = relationship("SubscriptionPlan")
 
-    # FIX 2 — backwards-compat alias so old payments.py code using
-    # p.metadata still works without a code change
-    @property
-    def metadata(self) -> dict:
-        return self.payment_metadata or {}
-
-    @metadata.setter
-    def metadata(self, value: dict) -> None:
-        self.payment_metadata = value
-
     def __repr__(self) -> str:
         return f"<Payment(id={self.id}, ₦{self.amount}, {self.status.value})>"
 
