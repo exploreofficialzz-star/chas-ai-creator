@@ -342,7 +342,12 @@ class TextGenerationService:
                     {"role": "system", "content": system},
                     {"role": "user",   "content": user_msg},
                 ],
-                "max_tokens": 1400, "temperature": 0.75, "top_p": 0.90,
+                "max_tokens": 2048, "temperature": 0.75, "top_p": 0.90,
+                # FIX B — forces pure JSON output, no preamble, no code fences.
+                # Supported by all Groq models when the prompt mentions "JSON".
+                # Also raises max_tokens 1400→2048: a 10-scene plan can be
+                # ~1500 tokens; truncated responses caused cascading parse failures.
+                "response_format": {"type": "json_object"},
             }
             try:
                 async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
@@ -377,7 +382,7 @@ class TextGenerationService:
                 "system_instruction": {"parts": [{"text": system}]},
                 "contents": [{"role": "user", "parts": [{"text": user_msg}]}],
                 "generationConfig": {
-                    "maxOutputTokens": 1400, "temperature": 0.75, "topP": 0.90,
+                    "maxOutputTokens": 2048, "temperature": 0.75, "topP": 0.90,
                 },
             }
             try:
@@ -809,14 +814,28 @@ def _extract_json_object(text: str) -> Optional[str]:
 
 
 def _fix(s: str) -> str:
-    """Trailing comma removal + Python literal normalisation.
-    Does NOT strip // comments — handled by _strip_js_comments() first."""
+    """
+    Light repair pass: trailing commas + Python literal normalisation.
+
+    FIX A — The old version had:
+        re.sub(r"(?<![\\])'", '"', s)
+    which replaced ALL unescaped single quotes with double quotes.
+    This destroyed apostrophes inside string values:
+        "Don't miss this!" → "Don"t miss this!" → JSON parse error.
+    Groq, Gemini, and OpenAI always output proper double-quoted JSON so
+    the single-quote normaliser was both unnecessary and catastrophic.
+    Removed entirely.
+
+    Does NOT strip // comments — handled by _strip_js_comments() first.
+    """
+    # Trailing commas before } or ]
     s = re.sub(r",\s*([}\]])", r"\1", s)
-    s = re.sub(r"(?<![\\])'", '"', s)
+    # Escape bare newlines inside string values
     s = re.sub(
         r'("(?:[^"\\]|\\.)*?")',
         lambda m: m.group(0).replace("\n", "\\n"), s,
     )
+    # Python → JSON literals
     s = s.replace(": None", ": null").replace(": True", ": true").replace(": False", ": false")
     return s
 
