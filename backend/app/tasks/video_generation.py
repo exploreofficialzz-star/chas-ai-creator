@@ -1,50 +1,6 @@
 """
 Video generation background task.
 FILE: app/tasks/video_generation.py
-
-BUGS FIXED:
-1. CRITICAL — VideoStatus.SCRIPT_GENERATING / IMAGES_GENERATING /
-   VIDEO_GENERATING / AUDIO_GENERATING / COMPOSING did not exist in
-   the VideoStatus enum → AttributeError crashed the task immediately
-   on the first _update_progress() call before any AI work happened.
-   Fixed: _safe_status() maps to the nearest real enum value that
-   exists, so progress updates never crash regardless of enum shape.
-
-2. CRITICAL — video.script, video.narration_text, video.hashtags,
-   video.started_at, video.file_size, video.resolution attributes
-   were set directly with = assignment. If those columns don't exist
-   in the DB migration yet → sqlalchemy.exc.InvalidRequestError crash.
-   Fixed: _safe_set() uses setattr only when hasattr() confirms the
-   column exists on the model.
-
-3. CRITICAL — Scenes from smart_generate were being re-created here,
-   causing duplicate scene rows and a UNIQUE constraint violation crash.
-   Fixed: check for existing scenes first; skip image generation step
-   if scenes already exist (smart_generate already saved them).
-
-4. CRITICAL — AIGenerationError from text_generation.py was not caught
-   here — it propagated up as a generic Exception and the error message
-   stored in video.error_message was the raw Python exception repr,
-   not the human-readable message from the service.
-   Fixed: AIGenerationError caught explicitly with its .message.
-
-5. voice_generation import failed silently — if
-   app/services/ai/voice_generation.py doesn't exist yet, the whole
-   task crashed at the import block. Fixed: each service is imported
-   inside its own try/except so a missing service degrades gracefully.
-
-6. video_composer import same issue as above. Fixed same way.
-
-7. _update_progress committed after EVERY scene image (N commits for
-   N scenes). On free-tier DB with slow connections this added 10-30s
-   of overhead per video. Fixed: commit only every 3 scenes and once
-   at the end of each major step.
-
-8. generate_video_task was defined as async but videos.py called it
-   via background_tasks.add_task() which expects a plain coroutine —
-   that part is correct. However _run_generation wrapper in videos.py
-   was calling await generate_video_task(video_id) which is also
-   correct. No change needed here — documented for clarity.
 """
 
 import asyncio
@@ -68,7 +24,7 @@ def _get_db() -> Session:
 
 
 def _safe_set(obj: Any, attr: str, value: Any) -> None:
-    """FIX 2 — Only set an attribute if the column actually exists on the model."""
+    """Only set an attribute if the column actually exists on the model."""
     if hasattr(obj, attr):
         setattr(obj, attr, value)
     else:
@@ -77,17 +33,19 @@ def _safe_set(obj: Any, attr: str, value: Any) -> None:
 
 def _safe_status(preferred: str) -> VideoStatus:
     """
-    FIX 1 — Return the preferred VideoStatus if it exists in the enum,
-    otherwise return the nearest fallback that always exists.
+    Return the preferred VideoStatus if it exists, otherwise
+    return the nearest fallback that always exists.
     """
     FALLBACKS = {
-        "script_generating": ["SCRIPT_GENERATING", "PROCESSING", "PENDING"],
-        "images_generating": ["IMAGES_GENERATING", "PROCESSING", "PENDING"],
-        "video_generating":  ["VIDEO_GENERATING",  "PROCESSING", "PENDING"],
-        "audio_generating":  ["AUDIO_GENERATING",  "PROCESSING", "PENDING"],
-        "composing":         ["COMPOSING",          "PROCESSING", "PENDING"],
-        "completed":         ["COMPLETED",          "DONE"],
-        "failed":            ["FAILED",             "ERROR"],
+        "script_generating": ["SCRIPT_GENERATING", "PENDING"],
+        "images_generating": ["IMAGES_GENERATING", "PENDING"],
+        "video_generating":  ["VIDEO_GENERATING",  "PENDING"],
+        "audio_generating":  ["AUDIO_GENERATING",  "PENDING"],
+        "composing":         ["COMPOSING",          "PENDING"],
+        "completed":         ["COMPLETED"],
+        "failed":            ["FAILED"],
+        "cancelled":         ["CANCELLED"],
+        "pending":           ["PENDING"],
     }
     candidates = FALLBACKS.get(preferred.lower(), [preferred.upper()])
     for name in candidates:
@@ -95,13 +53,13 @@ def _safe_status(preferred: str) -> VideoStatus:
             return VideoStatus[name]
         except KeyError:
             continue
-    # Last resort — return whatever PENDING/PROCESSING is
-    for name in ["PROCESSING", "PENDING"]:
+    # Absolute fallback
+    for name in ["PENDING", "FAILED"]:
         try:
             return VideoStatus[name]
         except KeyError:
             continue
-    return list(VideoStatus)[0]   # absolute fallback: first enum member
+    return list(VideoStatus)[0]
 
 
 def _update_progress(
@@ -111,7 +69,7 @@ def _update_progress(
     progress: int,
     commit: bool = True,
 ) -> None:
-    video.status   = _safe_status(status_key)   # FIX 1
+    video.status   = _safe_status(status_key)
     video.progress = progress
     if commit:
         try:
@@ -121,12 +79,19 @@ def _update_progress(
             db.rollback()
 
 
+def _video_type_str(video: Video) -> str:
+    vt = getattr(video, "video_type", None)
+    if vt is None:
+        return "silent"
+    return vt.value if hasattr(vt, "value") else str(vt)
+
+
 # ── Main task ─────────────────────────────────────────────────────────────────
 
 async def generate_video_task(video_id: str) -> Dict[str, Any]:
     """
     Full video generation pipeline.
-    Called by FastAPI BackgroundTasks — runs inside existing async loop.
+    Always returns a dict — never raises. Caller checks result["status"].
     """
     db    = _get_db()
     video = None
@@ -154,15 +119,12 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
         # ── STEP 1 — Script ───────────────────────────────────────────────────
         logger.info(f"Generating script: {video_id}")
 
-        # FIX 4 — import with explicit error type handling
+        # FIX: Import from script_generation (not text_generation)
         try:
-            from app.services.ai.text_generation import (
-                TextGenerationService,
-                AIGenerationError,
-            )
-            text_svc = TextGenerationService()
+            from app.services.ai.script_generation import ScriptGenerationService, AIGenerationError
+            text_svc = ScriptGenerationService()
         except ImportError as e:
-            raise RuntimeError(f"TextGenerationService not available: {e}")
+            raise RuntimeError(f"ScriptGenerationService not available: {e}")
 
         try:
             script = await text_svc.generate_script(
@@ -176,7 +138,6 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
                 voice_style=voice_style,
             )
         except AIGenerationError as e:
-            # FIX 4 — human-readable AI error message
             raise RuntimeError(str(e))
 
         _safe_set(video, "title",          script.get("title") or "Untitled Video")
@@ -185,7 +146,7 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
         _safe_set(video, "narration_text", script.get("narration"))
         _safe_set(video, "hashtags",       script.get("hashtags", []))
 
-        # Update title/description directly (these columns always exist)
+        # Always update title/description directly (these columns always exist)
         if not getattr(video, "title", None):
             video.title = script.get("title") or "Untitled Video"
         if not getattr(video, "description", None):
@@ -197,7 +158,7 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
         # ── STEP 2 — Images / Scenes ──────────────────────────────────────────
         logger.info(f"Generating images: {video_id}")
 
-        # FIX 3 — check if smart_generate already created scenes
+        # Check if smart_generate already created scenes — don't duplicate them
         existing_scenes: List[VideoScene] = db.query(VideoScene).filter(
             VideoScene.video_id == video_id
         ).order_by(VideoScene.scene_number).all()
@@ -208,10 +169,7 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
             )
             scenes = existing_scenes
         else:
-            # Create scenes from script
-            scenes = await _generate_scenes(
-                db, video, script, style_str
-            )
+            scenes = await _generate_scenes(db, video, script, style_str)
 
         if not scenes:
             raise RuntimeError("No scenes generated successfully")
@@ -221,7 +179,6 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
         # ── STEP 3 — Video clips ──────────────────────────────────────────────
         logger.info(f"Generating video clips: {video_id}")
 
-        # FIX 5 — import inside try/except so missing service degrades gracefully
         video_svc = None
         try:
             from app.services.ai.video_generation import VideoGenerationService
@@ -240,14 +197,12 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
                     )
                     scene.video_clip_url = clip_url
                 else:
-                    # Fallback: use image as clip placeholder
                     scene.video_clip_url = scene.image_url
-
             except Exception as e:
                 logger.error(f"Clip {i+1} failed ({e}) — using image fallback")
                 scene.video_clip_url = scene.image_url
 
-            # FIX 7 — commit every 3 scenes, not every scene
+            # Commit every 3 scenes to reduce DB overhead
             if (i + 1) % 3 == 0:
                 progress = 45 + int((i + 1) / max(len(scenes), 1) * 20)
                 _update_progress(db, video, "video_generating", progress)
@@ -262,7 +217,6 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
             logger.info(f"Generating voice: {video_id}")
             _update_progress(db, video, "audio_generating", 70)
 
-            # FIX 6 — import inside try/except
             try:
                 from app.services.ai.voice_generation import VoiceGenerationService
                 voice_svc     = VoiceGenerationService()
@@ -295,8 +249,7 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
         if not scene_data:
             raise RuntimeError("No valid scene media to compose")
 
-        # FIX 6 — composer also imported inside try/except
-        final_url    = None
+        final_url     = None
         thumbnail_url = None
         try:
             from app.services.video_composer import VideoComposerService
@@ -331,7 +284,6 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
 
         except ImportError:
             logger.warning("VideoComposerService not available — using first clip URL")
-            # Fallback: use first scene clip as the final video
             final_url     = scenes[0].video_clip_url or scenes[0].image_url
             thumbnail_url = scenes[0].image_url
 
@@ -378,7 +330,6 @@ async def _generate_scenes(
 ) -> List[VideoScene]:
     """Generate images for each scene and save to DB."""
 
-    # FIX 5 — import inside try/except
     image_svc = None
     try:
         from app.services.ai.image_generation import ImageGenerationService
@@ -429,15 +380,6 @@ async def _generate_scenes(
 
     db.commit()
     return scenes
-
-
-# ── Utility ───────────────────────────────────────────────────────────────────
-
-def _video_type_str(video: Video) -> str:
-    vt = getattr(video, "video_type", None)
-    if vt is None:
-        return "silent"
-    return vt.value if hasattr(vt, "value") else str(vt)
 
 
 # ── Scheduled tasks ───────────────────────────────────────────────────────────
