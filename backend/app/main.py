@@ -55,8 +55,8 @@ from app.config import settings
 from app.core.exceptions import APIException
 from app.core.logging import setup_logging, get_logger
 
-# FIX 6 — module-level; must be updated with `global` keyword inside functions
-_router_load_error: str = ""
+# FIX 6 — no type annotation here; annotated names cannot be used with `global`
+_router_load_error = ""
 
 setup_logging()
 logger = get_logger(__name__)
