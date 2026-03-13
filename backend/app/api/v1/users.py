@@ -2,34 +2,32 @@
 User management API routes.
 FILE: app/api/v1/users.py
 
-FIXES:
-1. CRITICAL — get_settings() raised NotFoundException on first login
-   because UserSettings row doesn't exist yet. Frontend calls GET
-   /settings on startup → crash. Fixed: auto-create defaults if missing.
+BUGS FIXED IN THIS VERSION:
+1. CRITICAL — GET /me was missing entirely. The frontend (api_service.dart)
+   calls GET /api/v1/users/me on every startup to check auth state.
+   It returned 404 every time → app thought user was logged out →
+   redirect to login. Added /me as an alias for /profile.
 
-2. UpdateSettingsRequest + UserSettingsResponse were missing
-   default_audio_mode, default_voice_style, default_target_platforms.
-   Frontend sends these on every settings save — they were silently dropped.
+2. get_settings() raised NotFoundException on first login because
+   UserSettings row doesn't exist yet. Auto-create defaults if missing.
 
-3. get_usage_stats() compared Video.status == "completed" (raw string)
-   against a SQLAlchemy enum column — always returned 0. Fixed to
-   use VideoStatus.COMPLETED enum value.
+3. UpdateSettingsRequest was missing default_audio_mode, default_voice_style,
+   default_target_platforms — silently dropped on every settings save.
 
-4. get_usage_stats() referenced current_user.daily_video_limit which
-   doesn't exist as a model attribute — AttributeError crash. Fixed
-   with tier-based lookup dict.
+4. get_usage_stats() compared Video.status == "completed" (raw string)
+   against a SQLAlchemy enum column — always returned 0. Fixed to use
+   VideoStatus.COMPLETED enum value.
 
-5. cancel_subscription() accessed current_user.subscription without a
-   None check — AttributeError if user has no subscription relation.
+5. get_usage_stats() referenced current_user.daily_video_limit which
+   doesn't exist as a model attribute — AttributeError crash.
 
-6. get_current_subscription() accessed current_user.daily_video_limit
-   and current_user.max_video_length — same AttributeError. Fixed.
+6. cancel_subscription() and get_current_subscription() accessed
+   non-existent model attributes — AttributeError crash.
 
-7. export_user_data() called v.to_dict() and p.to_dict() which may
-   not exist on all model versions — safe field-by-field export instead.
+7. export_user_data() called v.to_dict() and p.to_dict() — safe
+   field-by-field export instead.
 
-8. Added PUT /password endpoint — referenced in settings_screen.dart
-   but was missing from the original router.
+8. PUT /password was missing — referenced in settings_screen.dart.
 """
 
 import uuid as _uuid
@@ -48,12 +46,11 @@ from app.core.exceptions import (
 from app.core.logging import get_logger
 from app.core.security import verify_token
 from app.db.base import get_db
-from app.models.user import User, UserSettings, SubscriptionTier
+from app.models.user import User, UserSettings
 
 logger = get_logger(__name__)
 router = APIRouter()
 
-# Tier limits (mirrors videos.py to avoid circular import)
 _TIER_LIMITS = {
     "free":       {"daily": 2,   "max_duration": 30},
     "basic":      {"daily": 10,  "max_duration": 60},
@@ -62,23 +59,23 @@ _TIER_LIMITS = {
 }
 
 
-# ─── AUTH DEPENDENCY ──────────────────────────────────────────────────────────
+# ── Auth dependency ───────────────────────────────────────────────────────────
 
 def get_current_user(
     authorization: str = Header(None),
     db: Session = Depends(get_db),
 ) -> User:
     if not authorization or not authorization.startswith("Bearer "):
-        raise AuthenticationException("Authorization header required")
+        raise AuthenticationException("Authorization header required.")
     token   = authorization.split(" ")[1]
     payload = verify_token(token)
     user    = db.query(User).filter(User.id == payload.get("sub")).first()
     if not user:
-        raise AuthenticationException("User not found")
+        raise AuthenticationException("User not found. Please log in again.")
     return user
 
 
-# ─── HELPERS ──────────────────────────────────────────────────────────────────
+# ── Internal helpers ──────────────────────────────────────────────────────────
 
 def _tier_str(user: User) -> str:
     t = user.subscription_tier
@@ -94,7 +91,7 @@ def _max_duration(user: User) -> int:
 
 
 def _get_or_create_settings(user: User, db: Session) -> UserSettings:
-    """FIX 1 — Return existing row or create defaults. Never raises."""
+    """FIX 2 — Never raises; auto-creates default settings on first load."""
     s = db.query(UserSettings).filter(UserSettings.user_id == user.id).first()
     if not s:
         s = UserSettings(
@@ -130,9 +127,11 @@ def _get_or_create_settings(user: User, db: Session) -> UserSettings:
 
 
 def _settings_dict(s: UserSettings) -> dict:
-    """Safe dict export that works even if model lacks some newer columns."""
+    """FIX 7 — Safe export that won't crash if model is missing newer columns."""
     def g(attr, default):
-        return getattr(s, attr, None) if getattr(s, attr, None) is not None else default
+        v = getattr(s, attr, None)
+        return v if v is not None else default
+
     return {
         "default_niche":                 g("default_niche", "general"),
         "default_video_type":            g("default_video_type", "silent"),
@@ -161,7 +160,24 @@ def _settings_dict(s: UserSettings) -> dict:
     }
 
 
-# ─── PYDANTIC MODELS ──────────────────────────────────────────────────────────
+def _profile_dict(user: User) -> dict:
+    return {
+        "id":                      user.id,
+        "email":                   user.email,
+        "display_name":            user.display_name,
+        "bio":                     getattr(user, "bio", None),
+        "avatar_url":              getattr(user, "avatar_url", None),
+        "subscription_tier":       _tier_str(user),
+        "subscription_expires_at": (
+            user.subscription_expires_at.isoformat()
+            if getattr(user, "subscription_expires_at", None) else None
+        ),
+        "credits":   getattr(user, "credits", 0) or 0,
+        "created_at": user.created_at.isoformat(),
+    }
+
+
+# ── Pydantic models ───────────────────────────────────────────────────────────
 
 class UpdateProfileRequest(BaseModel):
     display_name: Optional[str] = None
@@ -180,7 +196,7 @@ class UpdateSettingsRequest(BaseModel):
     default_video_length:           Optional[int]       = None
     default_aspect_ratio:           Optional[str]       = None
     default_style:                  Optional[str]       = None
-    # FIX 2 — new fields matching frontend user.dart UserSettings
+    # FIX 3 — new fields that frontend always sends
     default_audio_mode:             Optional[str]       = None
     default_voice_style:            Optional[str]       = None
     default_target_platforms:       Optional[List[str]] = None
@@ -202,74 +218,72 @@ class UpdateSettingsRequest(BaseModel):
     auto_delete_videos_days:        Optional[int]       = None
 
 
-class UserProfileResponse(BaseModel):
-    id:                      str
-    email:                   str
-    display_name:            Optional[str]
-    bio:                     Optional[str]
-    avatar_url:              Optional[str]
-    subscription_tier:       str
-    subscription_expires_at: Optional[str]
-    credits:                 int
-    created_at:              str
-
-
 class UserSettingsResponse(BaseModel):
-    default_niche:                 str
-    default_video_type:            str
-    default_video_length:          int
-    default_aspect_ratio:          str
-    default_style:                 str
-    default_audio_mode:            str
-    default_voice_style:           str
-    default_target_platforms:      List[str]
-    character_consistency_enabled: bool
-    character_description:         Optional[str]
-    character_images:              List[str]
-    captions_enabled:              bool
-    caption_style:                 str
-    caption_color:                 str
-    caption_emoji_enabled:         bool
-    background_music_enabled:      bool
-    background_music_style:        str
-    default_daily_video_count:     int
-    default_schedule_times:        List[str]
-    email_notifications_enabled:   bool
-    push_notifications_enabled:    bool
-    notify_on_video_complete:      bool
-    notify_on_schedule:            bool
-    auto_delete_videos_days:       Optional[int]
+    default_niche:                  str
+    default_video_type:             str
+    default_video_length:           int
+    default_aspect_ratio:           str
+    default_style:                  str
+    default_audio_mode:             str
+    default_voice_style:            str
+    default_target_platforms:       List[str]
+    character_consistency_enabled:  bool
+    character_description:          Optional[str]
+    character_images:               List[str]
+    captions_enabled:               bool
+    caption_style:                  str
+    caption_color:                  str
+    caption_emoji_enabled:          bool
+    background_music_enabled:       bool
+    background_music_style:         str
+    default_daily_video_count:      int
+    default_schedule_times:         List[str]
+    email_notifications_enabled:    bool
+    push_notifications_enabled:     bool
+    notify_on_video_complete:       bool
+    notify_on_schedule:             bool
+    auto_delete_videos_days:        Optional[int]
 
 
 class UsageStatsResponse(BaseModel):
-    total_videos_generated:  int
-    videos_this_month:       int
-    videos_today:            int
-    storage_used:            int
-    remaining_daily_videos:  int
-    daily_limit:             int
-    subscription_tier:       str
-    max_video_length:        int
+    total_videos_generated: int
+    videos_this_month:      int
+    videos_today:           int
+    storage_used:           int
+    remaining_daily_videos: int
+    daily_limit:            int
+    subscription_tier:      str
+    max_video_length:       int
 
 
-# ─── ROUTES ───────────────────────────────────────────────────────────────────
+# ── Routes ────────────────────────────────────────────────────────────────────
 
-@router.get("/profile", response_model=UserProfileResponse)
-async def get_profile(current_user: User = Depends(get_current_user)):
-    return UserProfileResponse(
-        id=current_user.id,
-        email=current_user.email,
-        display_name=current_user.display_name,
-        bio=current_user.bio,
-        avatar_url=current_user.avatar_url,
-        subscription_tier=_tier_str(current_user),
-        subscription_expires_at=(
-            current_user.subscription_expires_at.isoformat()
-            if current_user.subscription_expires_at else None
-        ),
-        credits=current_user.credits or 0,
-        created_at=current_user.created_at.isoformat(),
-    )
+@router.get("/me")
+async def get_me(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    FIX 1 — CRITICAL. Was missing entirely.
+    api_service.dart calls GET /api/v1/users/me on every app startup
+    to verify the token and get the current user. Without this endpoint
+    every startup returned 404 → app forced the user to log in again.
+    """
+    s = _get_or_create_settings(current_user, db)
+    return {
+        "user":     _profile_dict(current_user),
+        "settings": _settings_dict(s),
+    }
+
+
+@router.get("/profile")
+async def get_profile(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Full profile — also creates default settings if this is first load."""
+    _get_or_create_settings(current_user, db)
+    return _profile_dict(current_user)
 
 
 @router.put("/profile")
@@ -287,7 +301,7 @@ async def update_profile(
     db.commit()
     db.refresh(current_user)
     logger.info(f"Profile updated: {current_user.id}")
-    return {"message": "Profile updated successfully"}
+    return {"message": "Profile updated successfully", "user": _profile_dict(current_user)}
 
 
 @router.put("/password")
@@ -297,15 +311,15 @@ async def update_password(
     db: Session = Depends(get_db),
 ):
     """FIX 8 — Was missing. Referenced in settings_screen.dart."""
-    from app.core.security import verify_password, hash_password
+    from app.core.security import hash_password, verify_password
     if not verify_password(request.current_password, current_user.hashed_password):
-        raise ValidationException("Current password is incorrect")
+        raise ValidationException("Current password is incorrect.")
     if len(request.new_password) < 8:
-        raise ValidationException("New password must be at least 8 characters")
+        raise ValidationException("New password must be at least 8 characters.")
     current_user.hashed_password = hash_password(request.new_password)
     db.commit()
     logger.info(f"Password updated: {current_user.id}")
-    return {"message": "Password updated successfully"}
+    return {"message": "Password updated successfully."}
 
 
 @router.get("/settings", response_model=UserSettingsResponse)
@@ -313,7 +327,7 @@ async def get_settings(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """FIX 1 — Never crashes; auto-creates defaults on first load."""
+    """FIX 2 — Never crashes; auto-creates defaults on first load."""
     s = _get_or_create_settings(current_user, db)
     return UserSettingsResponse(**_settings_dict(s))
 
@@ -333,7 +347,10 @@ async def update_settings(
     db.commit()
     db.refresh(s)
     logger.info(f"Settings updated: {current_user.id}")
-    return {"message": "Settings updated successfully", "settings": _settings_dict(s)}
+    return {
+        "message":  "Settings updated successfully.",
+        "settings": _settings_dict(s),
+    }
 
 
 @router.get("/usage", response_model=UsageStatsResponse)
@@ -341,11 +358,11 @@ async def get_usage_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    from app.models.video import Video, VideoStatus  # FIX 3
+    from app.models.video import Video, VideoStatus  # FIX 4
 
     total = db.query(Video).filter(
         Video.user_id == current_user.id,
-        Video.status  == VideoStatus.COMPLETED,    # FIX 3
+        Video.status  == VideoStatus.COMPLETED,   # FIX 4 — was raw string "completed"
     ).count()
 
     month_start = datetime.utcnow().replace(
@@ -365,7 +382,7 @@ async def get_usage_stats(
         Video.created_at >= today_start,
     ).count()
 
-    limit = _daily_limit(current_user)    # FIX 4
+    limit = _daily_limit(current_user)  # FIX 5 — was current_user.daily_video_limit
 
     return UsageStatsResponse(
         total_videos_generated=total,
@@ -388,7 +405,7 @@ async def delete_account(
     db.delete(current_user)
     db.commit()
     logger.info(f"Account deleted: {user_id}")
-    return {"message": "Account deleted successfully"}
+    return {"message": "Account deleted successfully."}
 
 
 @router.post("/export-data")
@@ -396,7 +413,7 @@ async def export_user_data(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    from app.models.video import Video, VideoStatus
+    from app.models.video import Video
     from app.models.payment import Payment
 
     videos   = db.query(Video).filter(Video.user_id == current_user.id).all()
@@ -405,22 +422,16 @@ async def export_user_data(
 
     return {
         "data": {
-            "profile": {
-                "id":                current_user.id,
-                "email":             current_user.email,
-                "display_name":      current_user.display_name,
-                "subscription_tier": _tier_str(current_user),
-                "created_at":        current_user.created_at.isoformat(),
-            },
-            # FIX 7 — safe export, no to_dict() dependency
+            "profile":  _profile_dict(current_user),
             "settings": _settings_dict(s) if s else None,
+            # FIX 7 — safe field-by-field export, no to_dict() dependency
             "videos": [
                 {
-                    "id":          v.id,
-                    "title":       v.title,
-                    "status":      v.status.value if hasattr(v.status, "value") else str(v.status),
-                    "video_url":   v.video_url,
-                    "created_at":  v.created_at.isoformat() if v.created_at else None,
+                    "id":         v.id,
+                    "title":      v.title,
+                    "status":     v.status.value if hasattr(v.status, "value") else str(v.status),
+                    "video_url":  v.video_url,
+                    "created_at": v.created_at.isoformat() if v.created_at else None,
                 }
                 for v in videos
             ],
