@@ -6,7 +6,7 @@
  *
  * 1. CRITICAL — createSchedule() signature mismatch.
  *    videos_screen.dart and dashboard_screen.dart call:
- *      _apiService.createSchedule({ 'name': ..., 'frequency': ..., ... })
+ *      _apiService.createSchedule({ 'name': ...,    'frequency': ...,   ... })
  *    But the old signature was named parameters:
  *      createSchedule({String? name, String frequency = 'daily', ...})
  *    This causes a compile error. Fixed: accepts Map<String, dynamic>
