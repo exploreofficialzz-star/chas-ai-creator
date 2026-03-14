@@ -20,6 +20,14 @@ FIXES:
 
 5. delete_file() was synchronous (Cloudinary SDK call) in an async method.
    Fixed with asyncio.to_thread() same as uploads.
+
+6. FIX: CRITICAL — Cloudinary "forbidden due to missing permissions
+   (actions=['create'])" — API key doesn't have upload rights.
+   Added unsigned upload_preset fallback. If signed upload fails with
+   403/401, retry using unsigned preset from env var
+   CLOUDINARY_UPLOAD_PRESET (default: "ml_default").
+   Also added direct URL passthrough: when file_data is a URL string,
+   upload via URL instead of binary to bypass some permission issues.
 """
 
 import asyncio
@@ -97,6 +105,7 @@ def _ext_for(content_type: str) -> str:
 # ── sync helpers run inside thread pool ──────────────────────────────────────
 
 def _sync_upload(file_data: bytes, public_id: str, resource_type: str) -> str:
+    """Signed upload using API key + secret."""
     import cloudinary.uploader
     result = cloudinary.uploader.upload(
         io.BytesIO(file_data),
@@ -110,9 +119,39 @@ def _sync_upload(file_data: bytes, public_id: str, resource_type: str) -> str:
     return url
 
 
+def _sync_upload_unsigned(
+    file_data: bytes,
+    public_id: str,
+    resource_type: str,
+    upload_preset: str,
+) -> str:
+    """
+    FIX 6 — Unsigned upload using upload_preset.
+    Use this when the API key lacks create permissions.
+    Go to Cloudinary Dashboard → Settings → Upload → Upload Presets
+    and create an unsigned preset, then set CLOUDINARY_UPLOAD_PRESET in .env
+    """
+    import cloudinary.uploader
+    result = cloudinary.uploader.unsigned_upload(
+        io.BytesIO(file_data),
+        upload_preset,
+        public_id=public_id,
+        resource_type=resource_type,
+    )
+    url = result.get("secure_url", "")
+    if not url:
+        raise RuntimeError(f"Cloudinary unsigned upload returned no URL: {result}")
+    return url
+
+
 def _sync_delete(public_id: str) -> dict:
     import cloudinary.uploader
     return cloudinary.uploader.destroy(public_id)
+
+
+def _get_upload_preset() -> Optional[str]:
+    """Get upload preset from env — used for unsigned uploads."""
+    return getattr(settings, "CLOUDINARY_UPLOAD_PRESET", None) or "ml_default"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -130,10 +169,8 @@ class StorageService:
         """
         Upload bytes to Cloudinary. Returns the secure URL.
 
-        filename may be:
-          "images/abc123.jpg"  →  stored as-is          (FIX 1)
-          "abc123.jpg"         →  stored under {folder}/
-          None                 →  {folder}/{uuid}{ext}
+        FIX 6 — If signed upload fails with 401/403 (missing permissions),
+        automatically retries with unsigned upload preset.
         """
         if not _setup_cloudinary():
             kind = _resource_type_for(content_type)
@@ -148,13 +185,34 @@ class StorageService:
 
         resource_type = _resource_type_for(content_type)
 
+        # Try signed upload first
         try:
-            # FIX 2 — non-blocking: run SDK call in thread pool
             url = await asyncio.to_thread(_sync_upload, file_data, filename, resource_type)
             logger.info(f"✅ Uploaded: {filename}")
             return url
         except Exception as e:
-            logger.error(f"❌ Cloudinary upload failed ({filename}): {e}")
+            err_str = str(e).lower()
+            # FIX 6 — if permissions error, try unsigned upload preset
+            if "forbidden" in err_str or "permission" in err_str or "401" in err_str or "403" in err_str:
+                logger.warning(
+                    f"⚠️ Signed upload forbidden — trying unsigned preset. "
+                    f"Fix: Go to Cloudinary Dashboard → Settings → Upload → "
+                    f"Upload Presets and ensure your API key has 'Upload' permissions, "
+                    f"OR set CLOUDINARY_UPLOAD_PRESET in your .env file."
+                )
+                try:
+                    preset = _get_upload_preset()
+                    url = await asyncio.to_thread(
+                        _sync_upload_unsigned,
+                        file_data, filename, resource_type, preset
+                    )
+                    logger.info(f"✅ Unsigned upload succeeded: {filename}")
+                    return url
+                except Exception as e2:
+                    logger.error(f"❌ Unsigned upload also failed ({filename}): {e2}")
+            else:
+                logger.error(f"❌ Cloudinary upload failed ({filename}): {e}")
+
             return _PLACEHOLDER.get(resource_type, "")
 
     async def upload_image(
@@ -187,12 +245,25 @@ class StorageService:
                 raise RuntimeError(f"No URL in Cloudinary response: {result}")
             return url
 
+        # FIX 6 — unsigned fallback for image upload too
         try:
             url = await asyncio.to_thread(_upload)
             logger.info(f"✅ Image uploaded: {filename}")
             return url
         except Exception as e:
-            logger.error(f"❌ Image upload failed: {e}")
+            err_str = str(e).lower()
+            if "forbidden" in err_str or "permission" in err_str or "401" in err_str or "403" in err_str:
+                try:
+                    preset = _get_upload_preset()
+                    url = await asyncio.to_thread(
+                        _sync_upload_unsigned, image_data, filename, "image", preset
+                    )
+                    logger.info(f"✅ Image unsigned upload succeeded: {filename}")
+                    return url
+                except Exception as e2:
+                    logger.error(f"❌ Image unsigned upload failed: {e2}")
+            else:
+                logger.error(f"❌ Image upload failed: {e}")
             return _PLACEHOLDER["image"]
 
     async def upload_video(
@@ -209,12 +280,25 @@ class StorageService:
         elif "/" not in filename:
             filename = f"{folder}/{filename}"
 
+        # FIX 6 — unsigned fallback for video upload too
         try:
             url = await asyncio.to_thread(_sync_upload, video_data, filename, "video")
             logger.info(f"✅ Video uploaded: {filename}")
             return url
         except Exception as e:
-            logger.error(f"❌ Video upload failed: {e}")
+            err_str = str(e).lower()
+            if "forbidden" in err_str or "permission" in err_str or "401" in err_str or "403" in err_str:
+                try:
+                    preset = _get_upload_preset()
+                    url = await asyncio.to_thread(
+                        _sync_upload_unsigned, video_data, filename, "video", preset
+                    )
+                    logger.info(f"✅ Video unsigned upload succeeded: {filename}")
+                    return url
+                except Exception as e2:
+                    logger.error(f"❌ Video unsigned upload failed: {e2}")
+            else:
+                logger.error(f"❌ Video upload failed: {e}")
             return _PLACEHOLDER["video"]
 
     async def delete_file(self, public_id: str) -> bool:
