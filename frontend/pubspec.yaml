@@ -15,7 +15,7 @@ dependencies:
   # UI
   cupertino_icons: ^1.0.6
   flutter_screenutil: ^5.9.0
-  google_fonts: ^6.2.1          # FIX 1: ^4.0.4 conflicts with material3 on newer Flutter — bump to ^6.x
+  google_fonts: ^6.2.0          # FIX: ^6.2.1 requires Flutter >=3.19.2 — downgrade to ^6.2.0 for 3.19.0
   flutter_svg: ^2.0.9
   shimmer: ^3.0.0
   cached_network_image: ^3.3.1
@@ -23,10 +23,8 @@ dependencies:
   smooth_page_indicator: ^1.1.0
   introduction_screen: ^3.1.14
   flutter_slidable: ^3.0.1
-  # FIX 2: pull_to_refresh is abandoned/unmaintained. Replaced with
-  # the maintained fork that supports Flutter 3.x without errors.
-  pull_to_refresh_flutter3: ^2.0.2
-  
+  pull_to_refresh_flutter3: ^2.0.2  # pull_to_refresh original is abandoned — use this fork
+
   # State Management
   flutter_bloc: ^8.1.3
   equatable: ^2.0.5
@@ -38,7 +36,7 @@ dependencies:
   # Networking
   dio: ^5.4.0
   http: ^1.1.0
-  retrofit: ^4.1.0              # FIX 3: ^4.0.3 has a known null-safety bug — bump to ^4.1.0
+  retrofit: ^4.1.0
   connectivity_plus: ^5.0.2
   
   # Authentication
@@ -59,7 +57,7 @@ dependencies:
   photo_view: ^0.14.0
   
   # Utils
-  intl: ^0.19.0                 # FIX 4: ^0.18.1 conflicts with Flutter 3.19+ which ships intl 0.19.x
+  intl: ^0.19.0
   uuid: ^4.3.3
   path_provider: ^2.1.1
   permission_handler: ^11.1.0
@@ -85,7 +83,7 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^3.0.1
   build_runner: ^2.4.7
-  retrofit_generator: ^8.1.0    # FIX 3: must match retrofit ^4.1.0
+  retrofit_generator: ^8.1.0
   json_serializable: ^6.7.1
   mockito: ^5.4.4
   hive_generator: ^2.0.1
