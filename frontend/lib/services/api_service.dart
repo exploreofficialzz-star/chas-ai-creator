@@ -2,37 +2,34 @@
  * chAs AI Creator - API Service
  * FILE: lib/services/api_service.dart
  *
- * ROOT CAUSE OF LOGIN BUG — FIXED HERE:
+ * BUGS FIXED:
  *
- * The Dio 401 interceptor had this structure:
+ * 1. CRITICAL — createSchedule() signature mismatch.
+ *    videos_screen.dart and dashboard_screen.dart call:
+ *      _apiService.createSchedule({ 'name': ..., 'frequency': ..., ... })
+ *    But the old signature was named parameters:
+ *      createSchedule({String? name, String frequency = 'daily', ...})
+ *    This causes a compile error. Fixed: accepts Map<String, dynamic>
+ *    so all callers work without change.
  *
- *   if (statusCode == 401) {
- *     try {
- *       final newToken = await refreshAccessToken();
- *       if (newToken != null) { retry; return; }
- *     } catch (_) {}
- *     await _authService.signOut();   ← THE BUG
- *   }
+ * 2. CRITICAL — updateSchedule() signature mismatch.
+ *    videos_screen.dart calls:
+ *      _apiService.updateSchedule(scheduleId, {'is_active': val})
+ *    But the old signature was:
+ *      updateSchedule(String id, {String? name, String? frequency, ...})
+ *    The positional Map argument was rejected. Fixed: accepts
+ *    (String scheduleId, Map<String, dynamic> data) positionally.
  *
- * signOut() ran unconditionally whenever refresh returned null OR threw.
- * On FIRST LOGIN there is no refresh token saved yet, so refresh always
- * returns null. The sequence was:
+ * 3. CRITICAL — smartGeneratePlan() missing referenceImages param.
+ *    smart_create_screen passes reference image URLs but the old
+ *    signature only had uploadedImageCount (an int). The backend
+ *    expects 'reference_images' as a List<String>. Fixed: added
+ *    List<String>? referenceImages parameter.
  *
- *   1. Login succeeds (AuthService) → token saved to SharedPreferences
- *   2. Authenticated emitted → HomeScreen mounts → DashboardScreen inits
- *   3. DashboardScreen fires getUsageStats() + getVideos() via Dio
- *   4. Render cold start → server returns 401 on first request
- *   5. Interceptor: no refresh token → refreshAccessToken() returns null
- *   6. signOut() runs → WIPES the just-saved access token from prefs
- *   7. AuthBloc still says Authenticated (in-memory) but token is gone
- *   8. Every subsequent API call: no token in header → 401 → loop
- *   9. App fully killed and relaunched → AppStarted → isSignedIn()
- *      returns false → stuck on LoginScreen
- *
- * THE FIX: NEVER call signOut() from the Dio interceptor.
- * Just pass the error to the caller. Dashboard errors are already
- * silently swallowed. Only the user explicitly logging out should
- * ever clear the token.
+ * ROOT CAUSE OF LOGIN BUG (already fixed, preserved here):
+ * The Dio 401 interceptor was calling _authService.signOut() which
+ * wiped the token on Render cold-start 401s. Removed signOut() call —
+ * callers handle errors silently, auth state is never affected.
  */
 
 import 'dart:developer' as developer;
@@ -57,13 +54,6 @@ class ApiService {
   ApiService._internal() {
     _dio = Dio(BaseOptions(
       baseUrl: baseUrl,
-      // FIX — increased from 30s → 60s.
-      // Render free tier cold start takes 50s+. The old 30s timeout
-      // caused DioExceptionType.connectionTimeout on the very first
-      // API call after login, which then triggered the broken 401
-      // handler path (connectionTimeout != 401 but the error bubbled
-      // up and caused confusing cascades). 60s gives Render time to
-      // wake up before we give up.
       connectTimeout: const Duration(seconds: 60),
       receiveTimeout: const Duration(seconds: 180),
       sendTimeout: const Duration(seconds: 60),
@@ -95,9 +85,6 @@ class ApiService {
 
         // ── 401 handler ───────────────────────────────────────────
         if (error.response?.statusCode == 401) {
-          // Only attempt refresh if a refresh token actually exists.
-          // On first login there is no refresh token yet — skip
-          // straight to passing the error to the caller.
           final refreshToken =
               await _authService.getRefreshToken();
 
@@ -106,7 +93,6 @@ class ApiService {
               final newToken =
                   await _authService.refreshAccessToken();
               if (newToken != null) {
-                // Retry the original request with the new token
                 error.requestOptions.headers['Authorization'] =
                     'Bearer $newToken';
                 final retried =
@@ -118,21 +104,7 @@ class ApiService {
             }
           }
 
-          // ─────────────────────────────────────────────────────
-          // THE FIX: do NOT call signOut() here.
-          //
-          // Old code:  await _authService.signOut();
-          //
-          // That single line wiped the login token from
-          // SharedPreferences every time a dashboard API call
-          // got a 401 during Render cold start.
-          //
-          // Callers (dashboard, videos screen) already wrap their
-          // API calls in try/catch and silently ignore errors.
-          // AuthBloc state is NEVER affected by a 401 here.
-          // The user can log out explicitly from Settings if their
-          // session has genuinely expired.
-          // ─────────────────────────────────────────────────────
+          // DO NOT call signOut() here — see file header.
           _log('⚠️ 401 on ${error.requestOptions.path} — '
               'passing to caller, NOT clearing token');
           return handler.next(error);
@@ -176,8 +148,8 @@ class ApiService {
   }) async {
     final response = await _dio.patch('/users/me', data: {
       if (displayName != null) 'display_name': displayName.trim(),
-      if (bio != null)         'bio': bio.trim(),
-      if (avatarUrl != null)   'avatar_url': avatarUrl,
+      if (bio != null) 'bio': bio.trim(),
+      if (avatarUrl != null) 'avatar_url': avatarUrl,
     });
     return User.fromJson(_asMap(response.data));
   }
@@ -188,7 +160,7 @@ class ApiService {
   }) async {
     await _dio.patch('/users/me/password', data: {
       'current_password': currentPassword,
-      'new_password':     newPassword,
+      'new_password': newPassword,
     });
   }
 
@@ -225,33 +197,35 @@ class ApiService {
       return {
         'total_videos_generated':
             data['total_videos_generated'] ??
-            data['total_videos'] ??
-            data['totalVideos'] ?? 0,
+                data['total_videos'] ??
+                data['totalVideos'] ??
+                0,
         'remaining_daily_videos':
             data['remaining_daily_videos'] ??
-            data['remaining'] ??
-            data['videos_remaining'] ?? 0,
-        'videos_today':
-            data['videos_today'] ??
+                data['remaining'] ??
+                data['videos_remaining'] ??
+                0,
+        'videos_today': data['videos_today'] ??
             data['today_count'] ??
-            data['videosToday'] ?? 0,
-        'videos_this_month':
-            data['videos_this_month'] ??
+            data['videosToday'] ??
+            0,
+        'videos_this_month': data['videos_this_month'] ??
             data['month_count'] ??
-            data['videosThisMonth'] ?? 0,
-        'credits':    data['credits'] ?? 0,
-        'daily_limit': data['daily_limit'] ?? data['limit'] ?? 2,
+            data['videosThisMonth'] ??
+            0,
+        'credits': data['credits'] ?? 0,
+        'daily_limit':
+            data['daily_limit'] ?? data['limit'] ?? 2,
         ...data,
       };
     } catch (_) {
-      // Non-critical — return zeros, never affect auth state
       return {
         'total_videos_generated': 0,
         'remaining_daily_videos': 0,
-        'videos_today':           0,
-        'videos_this_month':      0,
-        'credits':                0,
-        'daily_limit':            2,
+        'videos_today': 0,
+        'videos_this_month': 0,
+        'credits': 0,
+        'daily_limit': 2,
       };
     }
   }
@@ -286,31 +260,31 @@ class ApiService {
       '/videos/generate',
       data: {
         'niche': niche,
-        if (title != null)       'title': title,
+        if (title != null) 'title': title,
         if (description != null) 'description': description,
-        'video_type':   videoType,
-        'duration':     duration,
+        'video_type': videoType,
+        'duration': duration,
         'aspect_ratio': aspectRatio,
-        'style':        style,
+        'style': style,
         'character_consistency_enabled': characterConsistencyEnabled,
         if (characterDescription != null)
           'character_description': characterDescription,
-        'captions_enabled':         captionsEnabled,
-        'caption_style':            captionStyle,
-        'caption_color':            captionColor,
-        'caption_emoji_enabled':    captionEmojiEnabled,
+        'captions_enabled': captionsEnabled,
+        'caption_style': captionStyle,
+        'caption_color': captionColor,
+        'caption_emoji_enabled': captionEmojiEnabled,
         'background_music_enabled': backgroundMusicEnabled,
-        'background_music_style':   backgroundMusicStyle,
+        'background_music_style': backgroundMusicStyle,
         if (userInstructions != null)
           'user_instructions': userInstructions,
         if (scenePriorityNotes != null)
           'scene_priority_notes': scenePriorityNotes,
-        'audio_mode':       audioMode,
-        'voice_style':      voiceStyle,
+        'audio_mode': audioMode,
+        'voice_style': voiceStyle,
         'target_platforms': targetPlatforms,
       },
-      options: Options(
-          receiveTimeout: const Duration(seconds: 300)),
+      options:
+          Options(receiveTimeout: const Duration(seconds: 300)),
     );
     return _asMap(response.data);
   }
@@ -323,20 +297,19 @@ class ApiService {
     try {
       Response response;
       try {
-        response =
-            await _dio.get('/videos/', queryParameters: {
+        response = await _dio.get('/videos/', queryParameters: {
           if (status != null) 'status': status,
-          'page':     page,
-          'limit':    limit,
+          'page': page,
+          'limit': limit,
           'per_page': limit,
         });
       } on DioException catch (e) {
         if (e.response?.statusCode == 404 ||
             e.response?.statusCode == 405) {
-          response = await _dio
-              .get('/videos/list', queryParameters: {
+          response =
+              await _dio.get('/videos/list', queryParameters: {
             if (status != null) 'status': status,
-            'page':  page,
+            'page': page,
             'limit': limit,
           });
         } else {
@@ -346,25 +319,25 @@ class ApiService {
 
       final data = _asMap(response.data);
       final videos = (data['videos'] ??
-              data['data'] ??
-              data['items'] ??
-              data['results'] ??
-              []) as List;
+          data['data'] ??
+          data['items'] ??
+          data['results'] ??
+          []) as List;
 
       return {
         'videos': videos,
-        'total':  data['total'] ??
+        'total': data['total'] ??
             data['count'] ??
             data['total_count'] ??
             videos.length,
-        'page':  data['page'] ?? page,
+        'page': data['page'] ?? page,
         'pages': data['pages'] ??
             data['total_pages'] ??
-            data['pageCount'] ?? 1,
+            data['pageCount'] ??
+            1,
         ...data,
       };
     } catch (_) {
-      // Non-critical — return empty, never crash dashboard
       return {'videos': [], 'total': 0, 'page': 1, 'pages': 1};
     }
   }
@@ -376,8 +349,7 @@ class ApiService {
 
   Future<Map<String, dynamic>> getVideoScenes(
       String videoId) async {
-    final response =
-        await _dio.get('/videos/$videoId/scenes');
+    final response = await _dio.get('/videos/$videoId/scenes');
     return _asMap(response.data);
   }
 
@@ -396,50 +368,27 @@ class ApiService {
   // SCHEDULES
   // ─────────────────────────────────────────────────────────────────────────
 
-  Future<Map<String, dynamic>> createSchedule({
-    String? name,
-    String frequency = 'daily',
-    List<int>? daysOfWeek,
-    required List<String> scheduleTimes,
-    int maxVideosPerDay = 1,
-    Map<String, dynamic>? videoConfig,
-  }) async {
+  /// FIX 1 — was named params, callers pass a Map.
+  /// videos_screen.dart calls: _apiService.createSchedule({ 'name': ... })
+  /// dashboard_screen.dart calls: _apiService.createSchedule({ ... })
+  Future<Map<String, dynamic>> createSchedule(
+      Map<String, dynamic> data) async {
     final response =
-        await _dio.post('/videos/schedules', data: {
-      if (name != null)         'name': name,
-      'frequency':              frequency,
-      if (daysOfWeek != null)   'days_of_week': daysOfWeek,
-      'schedule_times':         scheduleTimes,
-      'max_videos_per_day':     maxVideosPerDay,
-      if (videoConfig != null)  'video_config': videoConfig,
-    });
+        await _dio.post('/videos/schedules', data: data);
     return _asMap(response.data);
   }
 
   Future<Map<String, dynamic>> getSchedules() async {
-    final response =
-        await _dio.get('/videos/schedules/list');
+    final response = await _dio.get('/videos/schedules/list');
     return _asMap(response.data);
   }
 
+  /// FIX 2 — was named params, callers pass a positional Map.
+  /// videos_screen.dart calls:
+  ///   _apiService.updateSchedule(scheduleId, {'is_active': val})
   Future<void> updateSchedule(
-    String scheduleId, {
-    String? name,
-    String? frequency,
-    List<int>? daysOfWeek,
-    List<String>? scheduleTimes,
-    int? maxVideosPerDay,
-    Map<String, dynamic>? videoConfig,
-  }) async {
-    await _dio.put('/videos/schedules/$scheduleId', data: {
-      if (name != null)            'name': name,
-      if (frequency != null)       'frequency': frequency,
-      if (daysOfWeek != null)      'days_of_week': daysOfWeek,
-      if (scheduleTimes != null)   'schedule_times': scheduleTimes,
-      if (maxVideosPerDay != null)
-        'max_videos_per_day': maxVideosPerDay,
-      if (videoConfig != null)     'video_config': videoConfig,
-    });
+      String scheduleId, Map<String, dynamic> data) async {
+    await _dio.put('/videos/schedules/$scheduleId', data: data);
   }
 
   Future<void> deleteSchedule(String scheduleId) async {
@@ -460,15 +409,15 @@ class ApiService {
     final response = await _dio.post(
       '/ai/generate-script',
       data: {
-        'niche':      niche,
+        'niche': niche,
         'video_type': videoType,
-        'duration':   duration,
-        'style':      style,
+        'duration': duration,
+        'style': style,
         if (userInstructions != null)
           'user_instructions': userInstructions,
       },
-      options: Options(
-          receiveTimeout: const Duration(seconds: 120)),
+      options:
+          Options(receiveTimeout: const Duration(seconds: 120)),
     );
     return _asMap(response.data);
   }
@@ -482,14 +431,14 @@ class ApiService {
     final response = await _dio.post(
       '/ai/generate-image',
       data: {
-        'prompt':       prompt,
-        'style':        style,
+        'prompt': prompt,
+        'style': style,
         'aspect_ratio': aspectRatio,
         if (negativePrompt != null)
           'negative_prompt': negativePrompt,
       },
-      options: Options(
-          receiveTimeout: const Duration(seconds: 120)),
+      options:
+          Options(receiveTimeout: const Duration(seconds: 120)),
     );
     return _asMap(response.data);
   }
@@ -504,19 +453,23 @@ class ApiService {
     final response = await _dio.post(
       '/ai/preview-video',
       data: {
-        'niche':      niche,
+        'niche': niche,
         'video_type': videoType,
-        'duration':   duration,
-        'style':      style,
+        'duration': duration,
+        'style': style,
         if (userInstructions != null)
           'user_instructions': userInstructions,
       },
-      options: Options(
-          receiveTimeout: const Duration(seconds: 180)),
+      options:
+          Options(receiveTimeout: const Duration(seconds: 180)),
     );
     return _asMap(response.data);
   }
 
+  /// FIX 3 — added referenceImages param.
+  /// smart_create_screen passes uploaded image URLs to the backend
+  /// as 'reference_images'. Old signature only had uploadedImageCount
+  /// which is an int — the backend never received the actual URLs.
   Future<Map<String, dynamic>> smartGeneratePlan({
     required String idea,
     String aspectRatio = '9:16',
@@ -528,25 +481,29 @@ class ApiService {
     String voiceStyle = 'professional',
     List<String> targetPlatforms = const ['tiktok'],
     bool characterConsistency = false,
+    List<String>? referenceImages,           // FIX 3 — was missing
     int uploadedImageCount = 0,
   }) async {
     final response = await _dio.post(
       '/ai/smart-plan',
       data: {
-        'idea':                     idea,
-        'aspect_ratio':             aspectRatio,
-        'duration':                 duration,
-        'style':                    style,
-        'captions_enabled':         captionsEnabled,
+        'idea': idea,
+        'aspect_ratio': aspectRatio,
+        'duration': duration,
+        'style': style,
+        'captions_enabled': captionsEnabled,
         'background_music_enabled': backgroundMusicEnabled,
-        'audio_mode':               audioMode,
-        'voice_style':              voiceStyle,
-        'target_platforms':         targetPlatforms,
-        'character_consistency':    characterConsistency,
-        'uploaded_image_count':     uploadedImageCount,
+        'audio_mode': audioMode,
+        'voice_style': voiceStyle,
+        'target_platforms': targetPlatforms,
+        'character_consistency': characterConsistency,
+        // FIX 3 — send actual URLs, fall back to empty list
+        'reference_images': referenceImages ?? [],
+        'uploaded_image_count':
+            referenceImages?.length ?? uploadedImageCount,
       },
-      options: Options(
-          receiveTimeout: const Duration(seconds: 240)),
+      options:
+          Options(receiveTimeout: const Duration(seconds: 240)),
     );
     return _asMap(response.data);
   }
@@ -569,8 +526,8 @@ class ApiService {
     try {
       final response = await _dio.get(
         '/ai/health',
-        options: Options(
-            receiveTimeout: const Duration(seconds: 10)),
+        options:
+            Options(receiveTimeout: const Duration(seconds: 10)),
       );
       return _asMap(response.data);
     } catch (_) {
@@ -625,7 +582,7 @@ class ApiService {
     String billingCycle = 'monthly',
   }) async {
     final r = await _dio.post('/payments/subscribe', data: {
-      'plan_id':       planId,
+      'plan_id': planId,
       'billing_cycle': billingCycle,
     });
     return _asMap(r.data);
@@ -653,12 +610,12 @@ class ApiService {
     final fileName = file.path.split('/').last;
     final ext = fileName.split('.').last.toLowerCase();
     final contentType = switch (ext) {
-      'png'  => MediaType('image', 'png'),
-      'gif'  => MediaType('image', 'gif'),
+      'png' => MediaType('image', 'png'),
+      'gif' => MediaType('image', 'gif'),
       'webp' => MediaType('image', 'webp'),
-      'mp4'  => MediaType('video', 'mp4'),
-      'mov'  => MediaType('video', 'quicktime'),
-      _      => MediaType('image', 'jpeg'),
+      'mp4' => MediaType('video', 'mp4'),
+      'mov' => MediaType('video', 'quicktime'),
+      _ => MediaType('image', 'jpeg'),
     };
 
     final formData = FormData.fromMap({
@@ -686,8 +643,7 @@ class ApiService {
         data['public_url'];
 
     if (url == null || url.toString().isEmpty) {
-      throw Exception(
-          'Upload succeeded but no URL returned');
+      throw Exception('Upload succeeded but no URL returned');
     }
     return url.toString();
   }
@@ -735,13 +691,18 @@ class ApiService {
         return switch (response.statusCode) {
           400 => '❌ Invalid request. Please check your inputs.',
           401 => '🔒 Session expired. Please log in again.',
-          403 => '🚫 You don\'t have permission to do this.',
-          404 => '🔍 Not found. It may have been deleted.',
+          403 =>
+            '🚫 You don\'t have permission to do this.',
+          404 =>
+            '🔍 Not found. It may have been deleted.',
           409 => '⚠️ This already exists.',
-          422 => '❌ Invalid data. Please check your inputs.',
-          429 => '⏳ Too many requests. Please wait a moment.',
+          422 =>
+            '❌ Invalid data. Please check your inputs.',
+          429 =>
+            '⏳ Too many requests. Please wait a moment.',
           500 => '🔧 Server error. Please try again.',
-          502 => '🔧 Server is starting up. Please retry in 30s.',
+          502 =>
+            '🔧 Server is starting up. Please retry in 30s.',
           503 =>
             '🔧 Service unavailable. Please try again soon.',
           _ =>
