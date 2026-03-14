@@ -1,13 +1,14 @@
 import 'dart:io';
 
+import 'package:chewie/chewie.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../config/theme.dart';
 import '../../services/api_service.dart';
@@ -37,7 +38,6 @@ class _VideosScreenState extends State<VideosScreen>
   int _completedCount = 0;
   int _processingCount = 0;
 
-  // Download progress tracking
   final Map<String, double> _downloadProgress = {};
   final Map<String, bool> _isDownloading = {};
 
@@ -56,7 +56,8 @@ class _VideosScreenState extends State<VideosScreen>
     _tabController = TabController(length: _tabs.length, vsync: this);
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging) {
-        setState(() => _selectedStatus = _tabs[_tabController.index].status);
+        setState(
+            () => _selectedStatus = _tabs[_tabController.index].status);
         _loadVideos(refresh: true);
       }
     });
@@ -99,7 +100,8 @@ class _VideosScreenState extends State<VideosScreen>
           response['data'] ??
           response['items'] ??
           []) as List;
-      final total = (response['total'] ?? response['count'] ?? 0) as int;
+      final total =
+          (response['total'] ?? response['count'] ?? 0) as int;
 
       if (mounted) {
         setState(() {
@@ -185,16 +187,13 @@ class _VideosScreenState extends State<VideosScreen>
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // APP BAR
-  // ─────────────────────────────────────────────────────────────────────────
-
   PreferredSizeWidget _buildAppBar() {
     return AppBar(
       title: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.video_library, size: 20.w, color: AppTheme.primaryColor),
+          Icon(Icons.video_library,
+              size: 20.w, color: AppTheme.primaryColor),
           SizedBox(width: 8.w),
           const Text('My Videos'),
         ],
@@ -229,10 +228,6 @@ class _VideosScreenState extends State<VideosScreen>
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // STATS ROW
-  // ─────────────────────────────────────────────────────────────────────────
-
   Widget _buildStatsRow() {
     return Container(
       decoration: BoxDecoration(
@@ -265,8 +260,8 @@ class _VideosScreenState extends State<VideosScreen>
         decoration: BoxDecoration(
           color: Theme.of(context).cardColor,
           borderRadius: BorderRadius.circular(14.r),
-          border:
-              Border.all(color: AppTheme.primaryColor.withOpacity(0.12)),
+          border: Border.all(
+              color: AppTheme.primaryColor.withOpacity(0.12)),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.04),
@@ -280,26 +275,21 @@ class _VideosScreenState extends State<VideosScreen>
           children: [
             Text(emoji, style: TextStyle(fontSize: 18.sp)),
             SizedBox(height: 4.h),
-            Text(
-              count,
-              style: TextStyle(
-                fontSize: 20.sp,
-                fontWeight: FontWeight.bold,
-                color: AppTheme.primaryColor,
-              ),
-            ),
+            Text(count,
+                style: TextStyle(
+                  fontSize: 20.sp,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.primaryColor,
+                )),
             SizedBox(height: 2.h),
             Text(label,
-                style: TextStyle(fontSize: 10.sp, color: Colors.grey)),
+                style:
+                    TextStyle(fontSize: 10.sp, color: Colors.grey)),
           ],
         ),
       ),
     );
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // TAB BAR
-  // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildTabBar() {
     return Container(
@@ -307,9 +297,7 @@ class _VideosScreenState extends State<VideosScreen>
         color: Theme.of(context).scaffoldBackgroundColor,
         border: Border(
           bottom: BorderSide(
-            color: Colors.grey.withOpacity(0.12),
-            width: 1,
-          ),
+              color: Colors.grey.withOpacity(0.12), width: 1),
         ),
       ),
       height: 52.h,
@@ -331,23 +319,17 @@ class _VideosScreenState extends State<VideosScreen>
         padding:
             EdgeInsets.symmetric(horizontal: 12.w, vertical: 6.h),
         tabs: _tabs
-            .map(
-              (t) => Tab(
-                child: Container(
-                  padding: EdgeInsets.symmetric(
-                      horizontal: 14.w, vertical: 4.h),
-                  child: Text(t.label),
-                ),
-              ),
-            )
+            .map((t) => Tab(
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                        horizontal: 14.w, vertical: 4.h),
+                    child: Text(t.label),
+                  ),
+                ))
             .toList(),
       ),
     );
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // BODY
-  // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildBody() {
     if (_isLoading && _videos.isEmpty) {
@@ -361,7 +343,8 @@ class _VideosScreenState extends State<VideosScreen>
           ? _buildEmptyState()
           : ListView.builder(
               controller: _scrollController,
-              padding: EdgeInsets.fromLTRB(14.w, 14.h, 14.w, 100.h),
+              padding:
+                  EdgeInsets.fromLTRB(14.w, 14.h, 14.w, 100.h),
               itemCount: _videos.length + (_hasMore ? 1 : 0),
               itemBuilder: (context, index) {
                 if (index == _videos.length) {
@@ -377,10 +360,6 @@ class _VideosScreenState extends State<VideosScreen>
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // VIDEO CARD
-  // ─────────────────────────────────────────────────────────────────────────
-
   Widget _buildVideoCard(dynamic video, int index) {
     final status = video['status'] as String? ?? 'pending';
     final title = video['title'] as String? ?? 'Untitled Video';
@@ -389,7 +368,8 @@ class _VideosScreenState extends State<VideosScreen>
     final createdAt = video['created_at'] as String?;
     final niche = video['niche'] as String? ?? '';
     final style = video['style'] as String? ?? '';
-    final progress = (video['progress'] as num?)?.toDouble() ?? 0.0;
+    final progress =
+        (video['progress'] as num?)?.toDouble() ?? 0.0;
     final videoId = video['id'] as String? ?? '';
     final isDownloadingThis = _isDownloading[videoId] == true;
     final downloadProg = _downloadProgress[videoId] ?? 0.0;
@@ -419,8 +399,8 @@ class _VideosScreenState extends State<VideosScreen>
           children: [
             // ── Thumbnail ──────────────────────────────────────
             ClipRRect(
-              borderRadius:
-                  BorderRadius.vertical(top: Radius.circular(20.r)),
+              borderRadius: BorderRadius.vertical(
+                  top: Radius.circular(20.r)),
               child: SizedBox(
                 height: 155.h,
                 width: double.infinity,
@@ -464,7 +444,8 @@ class _VideosScreenState extends State<VideosScreen>
                               horizontal: 8.w, vertical: 4.h),
                           decoration: BoxDecoration(
                             color: Colors.black54,
-                            borderRadius: BorderRadius.circular(8.r),
+                            borderRadius:
+                                BorderRadius.circular(8.r),
                           ),
                           child: Text(
                             _formatDuration(duration),
@@ -540,7 +521,8 @@ class _VideosScreenState extends State<VideosScreen>
                           children: [
                             Padding(
                               padding: EdgeInsets.symmetric(
-                                  horizontal: 14.w, vertical: 6.h),
+                                  horizontal: 14.w,
+                                  vertical: 6.h),
                               child: Row(
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceBetween,
@@ -562,7 +544,8 @@ class _VideosScreenState extends State<VideosScreen>
                               ),
                             ),
                             LinearProgressIndicator(
-                              value: progress > 0 ? progress : null,
+                              value:
+                                  progress > 0 ? progress : null,
                               backgroundColor:
                                   Colors.white.withOpacity(0.2),
                               color: AppTheme.primaryColor,
@@ -596,7 +579,8 @@ class _VideosScreenState extends State<VideosScreen>
 
             // ── Info area ──────────────────────────────────────
             Padding(
-              padding: EdgeInsets.fromLTRB(14.w, 12.h, 14.w, 14.h),
+              padding:
+                  EdgeInsets.fromLTRB(14.w, 12.h, 14.w, 14.h),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -633,7 +617,6 @@ class _VideosScreenState extends State<VideosScreen>
 
                   SizedBox(height: 10.h),
 
-                  // Action buttons for completed videos
                   if (status == 'completed') ...[
                     Row(
                       children: [
@@ -648,7 +631,9 @@ class _VideosScreenState extends State<VideosScreen>
                           isDownloadingThis
                               ? Icons.downloading_rounded
                               : Icons.download_rounded,
-                          isDownloadingThis ? 'Downloading...' : 'Download',
+                          isDownloadingThis
+                              ? 'Downloading...'
+                              : 'Download',
                           Colors.green,
                           isDownloadingThis
                               ? null
@@ -672,11 +657,13 @@ class _VideosScreenState extends State<VideosScreen>
                     children: [
                       if (niche.isNotEmpty)
                         _buildMetaChip(
-                            _nicheEmoji(niche), _capitalize(niche)),
+                            _nicheEmoji(niche),
+                            _capitalize(niche)),
                       if (style.isNotEmpty)
                         _buildMetaChip('🎨', _capitalize(style)),
                       if (createdAt != null)
-                        _buildMetaChip('🕒', _formatDate(createdAt)),
+                        _buildMetaChip(
+                            '🕒', _formatDate(createdAt)),
                     ],
                   ),
                 ],
@@ -766,26 +753,26 @@ class _VideosScreenState extends State<VideosScreen>
     final color = _statusColor(status);
     final label = _statusBadgeLabel(status);
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 9.w, vertical: 5.h),
+      padding:
+          EdgeInsets.symmetric(horizontal: 9.w, vertical: 5.h),
       decoration: BoxDecoration(
         color: color.withOpacity(0.88),
         borderRadius: BorderRadius.circular(8.r),
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 10.sp,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.2,
-        ),
-      ),
+      child: Text(label,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 10.sp,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.2,
+          )),
     );
   }
 
   Widget _buildMetaChip(String emoji, String label) {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 5.h),
+      padding:
+          EdgeInsets.symmetric(horizontal: 10.w, vertical: 5.h),
       decoration: BoxDecoration(
         color: AppTheme.primaryColor.withOpacity(0.08),
         borderRadius: BorderRadius.circular(20.r),
@@ -795,22 +782,16 @@ class _VideosScreenState extends State<VideosScreen>
         children: [
           Text(emoji, style: TextStyle(fontSize: 11.sp)),
           SizedBox(width: 5.w),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 11.sp,
-              color: AppTheme.primaryColor,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
+          Text(label,
+              style: TextStyle(
+                fontSize: 11.sp,
+                color: AppTheme.primaryColor,
+                fontWeight: FontWeight.w500,
+              )),
         ],
       ),
     );
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // EMPTY STATE
-  // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildEmptyState() {
     final isFiltered = _selectedStatus != null;
@@ -870,10 +851,6 @@ class _VideosScreenState extends State<VideosScreen>
       ],
     );
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // SKELETON LOADER
-  // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildSkeletonLoader() {
     return ListView.builder(
@@ -967,18 +944,18 @@ class _VideosScreenState extends State<VideosScreen>
             Padding(
               padding: EdgeInsets.symmetric(
                   horizontal: 20.w, vertical: 4.h),
-              child: Text(
-                title,
-                style: TextStyle(
-                    fontSize: 15.sp, fontWeight: FontWeight.bold),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+              child: Text(title,
+                  style: TextStyle(
+                      fontSize: 15.sp,
+                      fontWeight: FontWeight.bold),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
             ),
             SizedBox(height: 8.h),
             if (status == 'completed') ...[
               _optionTile(Icons.play_circle_outline_rounded,
-                  'Play Video', Colors.green, () => _openVideo(video)),
+                  'Play Video', Colors.green,
+                  () => _openVideo(video)),
               _optionTile(
                 isDownloadingThis
                     ? Icons.downloading_rounded
@@ -998,11 +975,17 @@ class _VideosScreenState extends State<VideosScreen>
             if (status == 'processing' ||
                 status == 'pending' ||
                 status.contains('generating'))
-              _optionTile(Icons.info_outline_rounded, 'View Progress',
-                  AppTheme.primaryColor, () => _showProgress(video)),
-            Divider(height: 8, color: Colors.grey.withOpacity(0.1)),
-            _optionTile(Icons.delete_outline_rounded, 'Delete Video',
-                Colors.red, () => _showDeleteDialog(video)),
+              _optionTile(
+                  Icons.info_outline_rounded,
+                  'View Progress',
+                  AppTheme.primaryColor,
+                  () => _showProgress(video)),
+            Divider(
+                height: 8,
+                color: Colors.grey.withOpacity(0.1)),
+            _optionTile(Icons.delete_outline_rounded,
+                'Delete Video', Colors.red,
+                () => _showDeleteDialog(video)),
             SizedBox(height: 8.h),
           ],
         ),
@@ -1025,7 +1008,8 @@ class _VideosScreenState extends State<VideosScreen>
           borderRadius: BorderRadius.circular(10.r),
         ),
         child: Icon(icon,
-            size: 19.w, color: onTap != null ? color : Colors.grey),
+            size: 19.w,
+            color: onTap != null ? color : Colors.grey),
       ),
       title: Text(label,
           style: TextStyle(
@@ -1042,7 +1026,7 @@ class _VideosScreenState extends State<VideosScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // SCHEDULE SHEET
+  // SCHEDULE SHEET — FIX: proper error handling in FutureBuilder
   // ─────────────────────────────────────────────────────────────────────────
 
   void _showScheduleSheet() {
@@ -1057,23 +1041,21 @@ class _VideosScreenState extends State<VideosScreen>
         builder: (_, scrollController) => Container(
           decoration: BoxDecoration(
             color: Theme.of(context).scaffoldBackgroundColor,
-            borderRadius:
-                BorderRadius.vertical(top: Radius.circular(24.r)),
+            borderRadius: BorderRadius.vertical(
+                top: Radius.circular(24.r)),
           ),
           child: Column(
             children: [
-              // Handle
               Container(
                 width: 36.w,
                 height: 4.h,
-                margin: EdgeInsets.only(top: 12.h, bottom: 8.h),
+                margin:
+                    EdgeInsets.only(top: 12.h, bottom: 8.h),
                 decoration: BoxDecoration(
                   color: Colors.grey.shade400,
                   borderRadius: BorderRadius.circular(2.r),
                 ),
               ),
-
-              // Header
               Padding(
                 padding: EdgeInsets.symmetric(
                     horizontal: 20.w, vertical: 12.h),
@@ -1082,25 +1064,29 @@ class _VideosScreenState extends State<VideosScreen>
                     Container(
                       padding: EdgeInsets.all(10.w),
                       decoration: BoxDecoration(
-                        color: AppTheme.primaryColor.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12.r),
+                        color: AppTheme.primaryColor
+                            .withOpacity(0.1),
+                        borderRadius:
+                            BorderRadius.circular(12.r),
                       ),
                       child: Icon(Icons.schedule_rounded,
-                          color: AppTheme.primaryColor, size: 22.w),
+                          color: AppTheme.primaryColor,
+                          size: 22.w),
                     ),
                     SizedBox(width: 12.w),
                     Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment:
+                          CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          '📅 Video Schedules',
-                          style: TextStyle(
-                              fontSize: 18.sp,
-                              fontWeight: FontWeight.bold),
-                        ),
-                        Text('Auto-generate videos on a schedule',
+                        Text('📅 Video Schedules',
                             style: TextStyle(
-                                fontSize: 11.sp, color: Colors.grey)),
+                                fontSize: 18.sp,
+                                fontWeight: FontWeight.bold)),
+                        Text(
+                            'Auto-generate videos on a schedule',
+                            style: TextStyle(
+                                fontSize: 11.sp,
+                                color: Colors.grey)),
                       ],
                     ),
                     const Spacer(),
@@ -1114,19 +1100,22 @@ class _VideosScreenState extends State<VideosScreen>
                             horizontal: 12.w, vertical: 8.h),
                         decoration: BoxDecoration(
                           color: AppTheme.primaryColor,
-                          borderRadius: BorderRadius.circular(10.r),
+                          borderRadius:
+                              BorderRadius.circular(10.r),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(Icons.add,
-                                color: Colors.white, size: 16.w),
+                                color: Colors.white,
+                                size: 16.w),
                             SizedBox(width: 4.w),
                             Text('New',
                                 style: TextStyle(
                                     color: Colors.white,
                                     fontSize: 12.sp,
-                                    fontWeight: FontWeight.w600)),
+                                    fontWeight:
+                                        FontWeight.w600)),
                           ],
                         ),
                       ),
@@ -1134,24 +1123,63 @@ class _VideosScreenState extends State<VideosScreen>
                   ],
                 ),
               ),
-
               Divider(
                   height: 1,
                   color: Colors.grey.withOpacity(0.1)),
-
-              // Schedule list
               Expanded(
                 child: FutureBuilder<Map<String, dynamic>>(
                   future: _apiService.getSchedules(),
                   builder: (context, snapshot) {
+                    // FIX: handle loading state
                     if (snapshot.connectionState ==
                         ConnectionState.waiting) {
                       return const Center(
                           child: CircularProgressIndicator());
                     }
 
-                    final schedules = (snapshot.data?['schedules'] ??
-                        []) as List;
+                    // FIX: handle error state — was crashing silently
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment:
+                              MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.error_outline,
+                                size: 48.w,
+                                color: Colors.red.shade300),
+                            SizedBox(height: 12.h),
+                            Text('Failed to load schedules',
+                                style: TextStyle(
+                                    fontSize: 16.sp,
+                                    fontWeight:
+                                        FontWeight.bold)),
+                            SizedBox(height: 8.h),
+                            Text(
+                              _apiService.handleError(
+                                  snapshot.error),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                  fontSize: 12.sp,
+                                  color: Colors.grey),
+                            ),
+                            SizedBox(height: 20.h),
+                            ElevatedButton.icon(
+                              onPressed: () {
+                                Navigator.pop(context);
+                                _showScheduleSheet();
+                              },
+                              icon: const Icon(
+                                  Icons.refresh, size: 16),
+                              label: const Text('Retry'),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    final schedules =
+                        (snapshot.data?['schedules'] ?? [])
+                            as List;
 
                     if (schedules.isEmpty) {
                       return _buildEmptySchedules();
@@ -1188,7 +1216,8 @@ class _VideosScreenState extends State<VideosScreen>
           Text(
             'Create a schedule to auto-generate\nvideos at set times',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 13.sp, color: Colors.grey),
+            style:
+                TextStyle(fontSize: 13.sp, color: Colors.grey),
           ),
           SizedBox(height: 24.h),
           ElevatedButton.icon(
@@ -1213,7 +1242,8 @@ class _VideosScreenState extends State<VideosScreen>
   Widget _buildScheduleCard(dynamic schedule) {
     final name = schedule['name'] as String? ?? 'Schedule';
     final isActive = schedule['is_active'] as bool? ?? false;
-    final frequency = schedule['frequency'] as String? ?? 'daily';
+    final frequency =
+        schedule['frequency'] as String? ?? 'daily';
     final maxPerDay =
         schedule['max_videos_per_day'] as int? ?? 1;
     final generated =
@@ -1276,11 +1306,13 @@ class _VideosScreenState extends State<VideosScreen>
               try {
                 await _apiService.updateSchedule(
                     scheduleId, {'is_active': val});
-                setState(() {});
-                _showToast(
-                    val ? '✅ Schedule activated' : '⏸️ Schedule paused');
+                if (mounted) setState(() {});
+                _showToast(val
+                    ? '✅ Schedule activated'
+                    : '⏸️ Schedule paused');
               } catch (e) {
-                _showToast(_apiService.handleError(e), error: true);
+                _showToast(_apiService.handleError(e),
+                    error: true);
               }
             },
           ),
@@ -1319,13 +1351,14 @@ class _VideosScreenState extends State<VideosScreen>
                   decoration: InputDecoration(
                     labelText: 'Schedule Name',
                     hintText: 'e.g. Daily Tech Videos',
-                    prefixIcon: const Icon(Icons.edit_outlined),
+                    prefixIcon:
+                        const Icon(Icons.edit_outlined),
                     border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12.r)),
+                        borderRadius:
+                            BorderRadius.circular(12.r)),
                   ),
                 ),
                 SizedBox(height: 16.h),
-
                 Text('Frequency',
                     style: TextStyle(
                         fontSize: 13.sp,
@@ -1337,15 +1370,14 @@ class _VideosScreenState extends State<VideosScreen>
                     return ChoiceChip(
                       label: Text(_capitalize(f)),
                       selected: frequency == f,
-                      selectedColor:
-                          AppTheme.primaryColor.withOpacity(0.2),
+                      selectedColor: AppTheme.primaryColor
+                          .withOpacity(0.2),
                       onSelected: (_) =>
                           setDialogState(() => frequency = f),
                     );
                   }).toList(),
                 ),
                 SizedBox(height: 16.h),
-
                 Row(
                   children: [
                     Text('Max per day:',
@@ -1354,7 +1386,8 @@ class _VideosScreenState extends State<VideosScreen>
                             fontWeight: FontWeight.w600)),
                     const Spacer(),
                     IconButton(
-                      icon: const Icon(Icons.remove_circle_outline),
+                      icon: const Icon(
+                          Icons.remove_circle_outline),
                       onPressed: maxPerDay > 1
                           ? () => setDialogState(
                               () => maxPerDay--)
@@ -1365,7 +1398,8 @@ class _VideosScreenState extends State<VideosScreen>
                             fontSize: 16.sp,
                             fontWeight: FontWeight.bold)),
                     IconButton(
-                      icon: const Icon(Icons.add_circle_outline),
+                      icon: const Icon(
+                          Icons.add_circle_outline),
                       onPressed: maxPerDay < 10
                           ? () => setDialogState(
                               () => maxPerDay++)
@@ -1373,7 +1407,6 @@ class _VideosScreenState extends State<VideosScreen>
                     ),
                   ],
                 ),
-
                 SizedBox(height: 8.h),
                 Text('Schedule Times',
                     style: TextStyle(
@@ -1387,7 +1420,8 @@ class _VideosScreenState extends State<VideosScreen>
                           Expanded(
                             child: Container(
                               padding: EdgeInsets.symmetric(
-                                  horizontal: 12.w, vertical: 10.h),
+                                  horizontal: 12.w,
+                                  vertical: 10.h),
                               decoration: BoxDecoration(
                                 color: AppTheme.primaryColor
                                     .withOpacity(0.08),
@@ -1395,18 +1429,21 @@ class _VideosScreenState extends State<VideosScreen>
                                     BorderRadius.circular(10.r),
                               ),
                               child: Text(e.value,
-                                  style:
-                                      TextStyle(fontSize: 13.sp)),
+                                  style: TextStyle(
+                                      fontSize: 13.sp)),
                             ),
                           ),
                           SizedBox(width: 8.w),
                           IconButton(
-                            icon: const Icon(Icons.access_time,
+                            icon: const Icon(
+                                Icons.access_time,
                                 size: 20),
                             onPressed: () async {
-                              final picked = await showTimePicker(
+                              final picked =
+                                  await showTimePicker(
                                 context: context,
-                                initialTime: TimeOfDay.now(),
+                                initialTime:
+                                    TimeOfDay.now(),
                               );
                               if (picked != null) {
                                 setDialogState(() {
@@ -1419,7 +1456,6 @@ class _VideosScreenState extends State<VideosScreen>
                         ],
                       ),
                     )),
-
                 TextButton.icon(
                   onPressed: () =>
                       setDialogState(() => times.add('12:00')),
@@ -1473,8 +1509,8 @@ class _VideosScreenState extends State<VideosScreen>
         padding: EdgeInsets.all(24.w),
         decoration: BoxDecoration(
           color: Theme.of(context).scaffoldBackgroundColor,
-          borderRadius:
-              BorderRadius.vertical(top: Radius.circular(24.r)),
+          borderRadius: BorderRadius.vertical(
+              top: Radius.circular(24.r)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1490,22 +1526,21 @@ class _VideosScreenState extends State<VideosScreen>
               ('newest', '🆕 Newest First'),
               ('oldest', '📅 Oldest First'),
               ('longest', '⏱️ Longest Duration'),
-            ].map(
-              (s) => ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(s.$2),
-                trailing: _sortBy == s.$1
-                    ? Icon(Icons.check, color: AppTheme.primaryColor)
-                    : null,
-                onTap: () {
-                  Navigator.pop(context);
-                  setState(() {
-                    _sortBy = s.$1;
-                    _sortVideos();
-                  });
-                },
-              ),
-            ),
+            ].map((s) => ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(s.$2),
+                  trailing: _sortBy == s.$1
+                      ? Icon(Icons.check,
+                          color: AppTheme.primaryColor)
+                      : null,
+                  onTap: () {
+                    Navigator.pop(context);
+                    setState(() {
+                      _sortBy = s.$1;
+                      _sortVideos();
+                    });
+                  },
+                )),
             SizedBox(height: 8.h),
           ],
         ),
@@ -1520,8 +1555,8 @@ class _VideosScreenState extends State<VideosScreen>
           _videos.sort((a, b) => (a['created_at'] ?? '')
               .compareTo(b['created_at'] ?? ''));
         case 'longest':
-          _videos.sort((a, b) =>
-              (b['duration'] ?? 0).compareTo(a['duration'] ?? 0));
+          _videos.sort((a, b) => (b['duration'] ?? 0)
+              .compareTo(a['duration'] ?? 0));
         default:
           _videos.sort((a, b) => (b['created_at'] ?? '')
               .compareTo(a['created_at'] ?? ''));
@@ -1530,29 +1565,37 @@ class _VideosScreenState extends State<VideosScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ACTIONS — FIXED: real implementations
+  // ACTIONS
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// FIX: Actually open video using url_launcher
+  /// FIX: Opens video in-app using chewie + video_player.
+  /// url_launcher cannot open Cloudinary video URLs directly on Android
+  /// because there is no registered app handler for .mp4 HTTPS URLs.
+  /// Using chewie gives a proper fullscreen video player experience.
   Future<void> _openVideo(dynamic video) async {
     final url = video['video_url'] as String?;
+    final title = video['title'] as String? ?? 'Video';
+
     if (url == null || url.isEmpty) {
       _showToast('⏳ Video is not ready yet', error: true);
       return;
     }
-    try {
-      final uri = Uri.parse(url);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        _showToast('❌ Could not open video player', error: true);
-      }
-    } catch (e) {
-      _showToast('❌ Failed to open video: $e', error: true);
-    }
+
+    // Show in-app video player dialog
+    await showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => _VideoPlayerDialog(
+        videoUrl: url,
+        title: title,
+      ),
+    );
   }
 
-  /// FIX: Actually download video using dio + path_provider
+  /// FIX: Removed storage permission check entirely.
+  /// getApplicationDocumentsDirectory() is the app's private directory —
+  /// it requires ZERO permissions on ALL Android versions (including 13+).
+  /// Permission.storage only applies to PUBLIC downloads folder.
   Future<void> _downloadVideo(dynamic video) async {
     final url = video['video_url'] as String?;
     final title = (video['title'] as String? ?? 'video')
@@ -1561,22 +1604,9 @@ class _VideosScreenState extends State<VideosScreen>
     final videoId = video['id'] as String? ?? '';
 
     if (url == null || url.isEmpty) {
-      _showToast('❌ Video not available for download', error: true);
+      _showToast('❌ Video not available for download',
+          error: true);
       return;
-    }
-
-    // Request storage permission on Android
-    if (Platform.isAndroid) {
-      final status = await Permission.storage.request();
-      if (!status.isGranted) {
-        // Try media permission for Android 13+
-        final mediaStatus =
-            await Permission.manageExternalStorage.request();
-        if (!mediaStatus.isGranted) {
-          _showToast('❌ Storage permission required', error: true);
-          return;
-        }
-      }
     }
 
     setState(() {
@@ -1585,8 +1615,10 @@ class _VideosScreenState extends State<VideosScreen>
     });
 
     try {
+      // FIX: App documents dir needs NO permission on any Android version
       final dir = await getApplicationDocumentsDirectory();
-      final savePath = '${dir.path}/${title}_${videoId.substring(0, 8)}.mp4';
+      final savePath =
+          '${dir.path}/${title}_${videoId.substring(0, 8)}.mp4';
 
       final dio = Dio();
       await dio.download(
@@ -1619,10 +1651,10 @@ class _VideosScreenState extends State<VideosScreen>
     }
   }
 
-  /// FIX: Actually share video using share_plus
   Future<void> _shareVideo(dynamic video) async {
     final url = video['video_url'] as String?;
-    final title = video['title'] as String? ?? 'Check out my AI video!';
+    final title =
+        video['title'] as String? ?? 'Check out my AI video!';
 
     if (url == null || url.isEmpty) {
       _showToast('❌ Video not ready to share', error: true);
@@ -1674,11 +1706,10 @@ class _VideosScreenState extends State<VideosScreen>
               color: AppTheme.primaryColor,
             ),
             SizedBox(height: 16.h),
-            Text(
-              _progressLabel(status),
-              style: TextStyle(
-                  fontSize: 13.sp, fontWeight: FontWeight.w600),
-            ),
+            Text(_progressLabel(status),
+                style: TextStyle(
+                    fontSize: 13.sp,
+                    fontWeight: FontWeight.w600)),
             SizedBox(height: 6.h),
             Text('${progress.toInt()}% complete',
                 style: TextStyle(fontSize: 13.sp)),
@@ -1716,11 +1747,13 @@ class _VideosScreenState extends State<VideosScreen>
             onPressed: () async {
               Navigator.pop(context);
               try {
-                await _apiService.deleteVideo(video['id'].toString());
+                await _apiService
+                    .deleteVideo(video['id'].toString());
                 _showToast('🗑️ Video deleted');
                 await _loadVideos(refresh: true);
               } catch (e) {
-                _showToast(_apiService.handleError(e), error: true);
+                _showToast(_apiService.handleError(e),
+                    error: true);
               }
             },
             style: ElevatedButton.styleFrom(
@@ -1783,7 +1816,9 @@ class _VideosScreenState extends State<VideosScreen>
   String _formatDuration(int seconds) {
     final m = seconds ~/ 60;
     final s = seconds % 60;
-    return m > 0 ? '$m:${s.toString().padLeft(2, '0')}' : '${s}s';
+    return m > 0
+        ? '$m:${s.toString().padLeft(2, '0')}'
+        : '${s}s';
   }
 
   String _formatDate(String iso) {
@@ -1801,6 +1836,175 @@ class _VideosScreenState extends State<VideosScreen>
 
   String _capitalize(String s) =>
       s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IN-APP VIDEO PLAYER DIALOG
+// FIX: Uses chewie + video_player instead of url_launcher.
+// Cloudinary HTTPS video URLs cannot be opened by url_launcher on Android
+// because there is no system app registered for .mp4 HTTPS links.
+// Chewie provides a proper fullscreen player with controls.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _VideoPlayerDialog extends StatefulWidget {
+  final String videoUrl;
+  final String title;
+
+  const _VideoPlayerDialog({
+    required this.videoUrl,
+    required this.title,
+  });
+
+  @override
+  State<_VideoPlayerDialog> createState() =>
+      _VideoPlayerDialogState();
+}
+
+class _VideoPlayerDialogState
+    extends State<_VideoPlayerDialog> {
+  late VideoPlayerController _videoPlayerController;
+  ChewieController? _chewieController;
+  bool _isInitializing = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _initPlayer();
+  }
+
+  Future<void> _initPlayer() async {
+    try {
+      _videoPlayerController = VideoPlayerController.networkUrl(
+        Uri.parse(widget.videoUrl),
+      );
+
+      await _videoPlayerController.initialize();
+
+      _chewieController = ChewieController(
+        videoPlayerController: _videoPlayerController,
+        autoPlay: true,
+        looping: false,
+        allowFullScreen: true,
+        allowMuting: true,
+        showControls: true,
+        placeholder: Container(
+          color: Colors.black,
+          child: const Center(
+            child: CircularProgressIndicator(
+                color: Colors.white),
+          ),
+        ),
+      );
+
+      if (mounted) setState(() => _isInitializing = false);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isInitializing = false;
+          _error = 'Could not load video. Tap below to open in browser.';
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _videoPlayerController.dispose();
+    _chewieController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.black,
+      insetPadding: EdgeInsets.all(12.w),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16.r)),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Header
+          Padding(
+            padding: EdgeInsets.symmetric(
+                horizontal: 16.w, vertical: 12.h),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.title,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close,
+                      color: Colors.white),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+
+          // Player
+          AspectRatio(
+            aspectRatio: 9 / 16,
+            child: _isInitializing
+                ? const Center(
+                    child: CircularProgressIndicator(
+                        color: Colors.white))
+                : _error != null
+                    ? _buildErrorState()
+                    : Chewie(controller: _chewieController!),
+          ),
+
+          SizedBox(height: 8.h),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Container(
+      color: Colors.black87,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline,
+                color: Colors.white54, size: 48),
+            const SizedBox(height: 12),
+            Text(
+              _error ?? 'Playback error',
+              style: const TextStyle(
+                  color: Colors.white70, fontSize: 13),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: () async {
+                final uri = Uri.parse(widget.videoUrl);
+                if (await canLaunchUrl(uri)) {
+                  await launchUrl(uri,
+                      mode: LaunchMode.externalApplication);
+                }
+              },
+              icon: const Icon(Icons.open_in_browser,
+                  size: 16),
+              label: const Text('Open in Browser'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryColor,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _StatusTab {
