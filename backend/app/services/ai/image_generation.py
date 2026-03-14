@@ -14,24 +14,25 @@ BUGS FIXED:
 4. HuggingFace kept as third provider with correct aspect-ratio
    dimensions and fixed wait_for_model logic.
 
-5. Placeholder image now only used as absolute last resort — real
-   AI images from Pollinations always available.
+5. Placeholder image now only used as absolute last resort.
 
-6. FIX: Added asyncio.sleep(3) before Pollinations retries to avoid
-   429 Too Many Requests when generating 10 scenes in rapid succession.
+6. FIX: Added asyncio.sleep between requests to avoid Pollinations 429.
 
-7. FIX: Updated HuggingFace model IDs — old models are 410 Gone.
-   Now uses FLUX.1-schnell and other active models.
+7. FIX: Updated HuggingFace to use new router endpoint
+   (https://router.huggingface.co/hf-inference/models/) —
+   old api-inference.huggingface.co returns 410 Gone for all image models.
 
-8. FIX: Added Picsum fallback for when ALL AI providers fail and
-   Cloudinary is also down — returns a real image URL not a placeholder.
+8. FIX: Pollinations 500 — when flux model fails, retry with 'turbo' model.
+
+9. FIX: CRITICAL — When Cloudinary upload fails, return the direct
+   Pollinations URL instead of a placeholder. Video always gets real images.
 """
 
 import asyncio
 import base64
 import io
 import uuid
-from typing import Optional
+from typing import Optional, Tuple
 
 import httpx
 from PIL import Image
@@ -41,12 +42,12 @@ from app.services.storage import StorageService
 
 logger = get_logger(__name__)
 
-# FIX 7 — Updated to active HF models (old ones are 410 Gone)
+# FIX 7 — use new HF router endpoint models
 _HF_IMAGE_MODELS = [
     "black-forest-labs/FLUX.1-schnell",
-    "stabilityai/stable-diffusion-3.5-large-turbo",
-    "stabilityai/stable-diffusion-3-medium-diffusers",
+    "stabilityai/stable-diffusion-xl-base-1.0",
     "Lykon/dreamshaper-8",
+    "runwayml/stable-diffusion-v1-5",
 ]
 
 _API_DIMENSIONS = {
@@ -61,7 +62,6 @@ _RESOLUTIONS = {
     "1:1":   (720,  720),
 }
 
-# FIX 8 — Picsum categories for niches (real photos fallback)
 _PICSUM_SIZES = {
     "9:16":  "720/1280",
     "16:9":  "1280/720",
@@ -77,9 +77,10 @@ class ImageGenerationService:
         s = get_settings()
         self.hf_key      = getattr(s, "HUGGINGFACE_API_KEY", None) or ""
         self.segmind_key = getattr(s, "SEGMIND_API_KEY",    None) or ""
-        self.hf_base     = "https://api-inference.huggingface.co/models"
+        # FIX 7 — new HF router endpoint
+        self.hf_base     = "https://router.huggingface.co/hf-inference/models"
         self.storage     = StorageService()
-        self._request_count = 0   # FIX 6 — track requests for rate limiting
+        self._request_count = 0   # FIX 6 — track for rate limiting
 
     # ── PUBLIC ────────────────────────────────────────────────────────────────
 
@@ -98,34 +99,38 @@ class ImageGenerationService:
         )
 
         self._request_count += 1
-        image_data: Optional[bytes] = None
+        image_data:  Optional[bytes] = None
+        direct_url:  Optional[str]   = None  # FIX 9
 
-        # FIX 6 — Add delay after every 2nd request to avoid Pollinations 429
+        # FIX 6 — delay to avoid rate limits across 10 scenes
         if self._request_count > 1:
             delay = 3.0 if self._request_count % 2 == 0 else 1.5
             await asyncio.sleep(delay)
 
-        # Provider 1 — Pollinations (no key, free)
+        # ── Provider 1: Pollinations ──────────────────────────────────────────
         try:
-            image_data = await self._pollinations(enhanced, aspect_ratio)
+            image_data, direct_url = await self._pollinations(enhanced, aspect_ratio)
         except Exception as e:
             logger.warning(f"Pollinations failed: {e}")
-            # FIX 6 — on 429, wait longer and retry once
-            if "429" in str(e):
-                await asyncio.sleep(8.0)
+            # FIX 8 — retry with turbo on 500/429
+            if "500" in str(e) or "429" in str(e):
+                wait = 8.0 if "429" in str(e) else 3.0
+                await asyncio.sleep(wait)
                 try:
-                    image_data = await self._pollinations(enhanced, aspect_ratio)
+                    image_data, direct_url = await self._pollinations(
+                        enhanced, aspect_ratio, model="turbo"
+                    )
                 except Exception as e2:
-                    logger.warning(f"Pollinations retry failed: {e2}")
+                    logger.warning(f"Pollinations turbo retry failed: {e2}")
 
-        # Provider 2 — Segmind
+        # ── Provider 2: Segmind ───────────────────────────────────────────────
         if not image_data and self.segmind_key:
             try:
                 image_data = await self._segmind(enhanced, neg, aspect_ratio)
             except Exception as e:
                 logger.warning(f"Segmind failed: {e}")
 
-        # Provider 3 — HuggingFace (FIX 7 — updated models)
+        # ── Provider 3: HuggingFace ───────────────────────────────────────────
         if not image_data and self.hf_key:
             for model in _HF_IMAGE_MODELS:
                 try:
@@ -135,36 +140,51 @@ class ImageGenerationService:
                 except Exception as e:
                     logger.warning(f"HF {model} failed: {e}")
 
-        # FIX 5 — placeholder only as last resort
-        if not image_data:
-            logger.warning("All image providers failed — using placeholder")
-            image_data = self._placeholder(aspect_ratio)
+        # ── Upload to storage ─────────────────────────────────────────────────
+        if image_data:
+            try:
+                url = await self._upload(image_data, aspect_ratio)
+                # Only return if it's a real URL, not a placeholder
+                if url and "placehold" not in url and url.startswith("http"):
+                    return url
+            except Exception as e:
+                logger.error(f"Image upload failed: {e}")
 
-        # Upload to storage
-        try:
-            return await self._upload(image_data, aspect_ratio)
-        except Exception as e:
-            logger.error(f"Image upload failed: {e}")
-            # FIX 8 — return real Picsum URL instead of broken placeholder
-            return self._picsum_url(aspect_ratio)
+            # FIX 9 — upload failed but Pollinations gave us a real URL
+            if direct_url:
+                logger.warning("Storage upload failed — using direct provider URL")
+                return direct_url
+
+        # ── Absolute fallback ─────────────────────────────────────────────────
+        logger.warning("All image providers failed — using picsum fallback")
+        return self._picsum_url(aspect_ratio)
 
     # ── PROVIDERS ─────────────────────────────────────────────────────────────
 
-    async def _pollinations(self, prompt: str, aspect_ratio: str) -> bytes:
-        """Pollinations.ai: free, no API key, good quality."""
+    async def _pollinations(
+        self,
+        prompt: str,
+        aspect_ratio: str,
+        model: str = "flux",
+    ) -> Tuple[bytes, str]:
+        """
+        FIX 9 — returns (image_bytes, direct_url) so callers can
+        use the URL directly if Cloudinary upload fails.
+        FIX 8 — model param lets us retry with 'turbo' on 500.
+        """
         w, h = _RESOLUTIONS.get(aspect_ratio, (720, 1280))
         import urllib.parse
         encoded = urllib.parse.quote(prompt[:400])
         url = (
             f"https://image.pollinations.ai/prompt/{encoded}"
-            f"?width={w}&height={h}&nologo=true&enhance=true&model=flux"
+            f"?width={w}&height={h}&nologo=true&enhance=true&model={model}"
         )
         async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as c:
             r = await c.get(url)
             r.raise_for_status()
             if len(r.content) < 1000:
                 raise ValueError("Pollinations returned too-small response")
-            return r.content
+            return r.content, url
 
     async def _segmind(
         self, prompt: str, neg: str, aspect_ratio: str
@@ -172,15 +192,15 @@ class ImageGenerationService:
         """Segmind SDXL — 200 free/month, best quality."""
         dims = _API_DIMENSIONS.get(aspect_ratio, _API_DIMENSIONS["9:16"])
         payload = {
-            "prompt":          prompt,
-            "negative_prompt": neg,
-            "style":           "hdr",
-            "samples":         1,
+            "prompt":              prompt,
+            "negative_prompt":     neg,
+            "style":               "hdr",
+            "samples":             1,
             "num_inference_steps": 30,
-            "guidance_scale":  7.5,
-            "width":           dims["width"]  * 2,
-            "height":          dims["height"] * 2,
-            "base64":          False,
+            "guidance_scale":      7.5,
+            "width":               dims["width"]  * 2,
+            "height":              dims["height"] * 2,
+            "base64":              False,
         }
         headers = {
             "x-api-key":    self.segmind_key,
@@ -210,25 +230,34 @@ class ImageGenerationService:
         prompt: str, neg: str,
         model: str, aspect_ratio: str,
     ) -> bytes:
-        """FIX 7 — Updated to use active HF models."""
+        """
+        FIX 7 — New HF router endpoint.
+        Old: api-inference.huggingface.co/models/ → 410 Gone
+        New: router.huggingface.co/hf-inference/models/
+        """
         dims    = _API_DIMENSIONS.get(aspect_ratio, _API_DIMENSIONS["9:16"])
         headers = {
             "Authorization": f"Bearer {self.hf_key}",
             "Content-Type":  "application/json",
         }
+        is_flux = "flux" in model.lower() or "schnell" in model.lower()
         payload = {
             "inputs": prompt,
             "parameters": {
                 "negative_prompt":     neg,
-                "num_inference_steps": 4 if "schnell" in model else 28,
-                "guidance_scale":      0.0 if "schnell" in model else 7.0,
+                "num_inference_steps": 4 if is_flux else 28,
+                "guidance_scale":      0.0 if is_flux else 7.0,
                 "width":               dims["width"],
                 "height":              dims["height"],
             },
             "options": {"wait_for_model": True, "use_cache": False},
         }
         async with httpx.AsyncClient(timeout=90.0) as c:
-            r = await c.post(f"{self.hf_base}/{model}", headers=headers, json=payload)
+            r = await c.post(
+                f"{self.hf_base}/{model}",
+                headers=headers,
+                json=payload,
+            )
         if r.status_code == 503:
             raise RuntimeError("HF model loading (503)")
         r.raise_for_status()
@@ -306,7 +335,7 @@ class ImageGenerationService:
         return URLs.get(aspect_ratio, URLs["9:16"])
 
     def _picsum_url(self, aspect_ratio: str) -> str:
-        """FIX 8 — Real photo fallback when Cloudinary is unavailable."""
+        """Real photo fallback when all providers and storage fail."""
         size = _PICSUM_SIZES.get(aspect_ratio, "720/1280")
         seed = uuid.uuid4().int % 1000
         return f"https://picsum.photos/seed/{seed}/{size}"
