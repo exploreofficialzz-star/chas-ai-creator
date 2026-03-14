@@ -1,6 +1,15 @@
 /*
  * chAs AI Creator - Dashboard Screen
- * Enhanced with Schedule button + all existing features preserved
+ * FILE: lib/screens/dashboard/dashboard_screen.dart
+ *
+ * FIXES IN THIS VERSION:
+ * 1. Quick action buttons all same height — fixed with height: 80.h
+ *    and crossAxisAlignment: CrossAxisAlignment.stretch
+ * 2. Schedule overview FutureBuilder has proper error handling —
+ *    no more silent crash when API fails
+ * 3. Auth guard on all API calls — never fires before token is ready
+ * 4. Interstitial ad deferred 3s — never interferes with auth state
+ * 5. signOut() never called from API interceptor
  */
 
 import 'package:flutter/material.dart';
@@ -72,7 +81,12 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (!mounted) return;
     final authState = context.read<AuthBloc>().state;
     if (authState is! Authenticated) {
-      if (mounted) setState(() { _isLoading = false; _isRefreshing = false; });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isRefreshing = false;
+        });
+      }
       return;
     }
 
@@ -162,12 +176,15 @@ class _DashboardScreenState extends State<DashboardScreen>
           appBar: _buildAppBar(user),
           body: Column(
             children: [
+              // Static welcome card — never scrolls
               Container(
                 color: Theme.of(context).scaffoldBackgroundColor,
                 padding:
                     EdgeInsets.fromLTRB(16.w, 12.h, 16.w, 12.h),
                 child: _buildWelcomeCard(user),
               ),
+
+              // Scrollable content
               Expanded(
                 child: _isLoading
                     ? const Center(
@@ -183,25 +200,32 @@ class _DashboardScreenState extends State<DashboardScreen>
                             children: [
                               _buildDailyUsageBar(),
                               SizedBox(height: 20.h),
+
                               _buildSectionTitle('📊 Your Stats'),
                               SizedBox(height: 12.h),
                               _buildStatsGrid(),
                               SizedBox(height: 20.h),
+
+                              // Upgrade banner (free tier only)
                               if ((user?.subscriptionTier ?? 'free')
                                       .toLowerCase() ==
                                   'free') ...[
                                 _buildUpgradeBanner(),
                                 SizedBox(height: 20.h),
                               ],
+
                               RewardAdButton(
                                   onRewardEarned: _onCreditsEarned),
                               SizedBox(height: 20.h),
+
                               _buildSectionTitle('⚡ Quick Actions'),
                               SizedBox(height: 12.h),
                               _buildQuickActions(),
                               SizedBox(height: 20.h),
+
                               const BannerAdContainer(),
                               SizedBox(height: 20.h),
+
                               _buildRecentVideos(),
                             ],
                           ),
@@ -261,7 +285,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           ),
         ),
 
-        // Notification bell
+        // Notification bell with badge
         Stack(
           clipBehavior: Clip.none,
           children: [
@@ -277,7 +301,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                   width: 16.w,
                   height: 16.w,
                   decoration: const BoxDecoration(
-                      color: Colors.red, shape: BoxShape.circle),
+                      color: Colors.red,
+                      shape: BoxShape.circle),
                   child: Center(
                     child: Text('$_notificationCount',
                         style: TextStyle(
@@ -323,6 +348,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       ),
       child: Row(
         children: [
+          // Avatar
           Container(
             width: 60.w,
             height: 60.w,
@@ -340,6 +366,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                 : _avatarText(initial),
           ),
           SizedBox(width: 16.w),
+
+          // Info
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -361,7 +389,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                 SizedBox(height: 10.h),
                 Row(
                   children: [
-                    _welchipBadge('$tierEmoji ${tier.toUpperCase()}'),
+                    _welchipBadge(
+                        '$tierEmoji ${tier.toUpperCase()}'),
                     SizedBox(width: 8.w),
                     _welchipBadge(
                       '🎬 ${_usageStats?['remaining_daily_videos'] ?? 0} left today',
@@ -478,7 +507,8 @@ class _DashboardScreenState extends State<DashboardScreen>
       _StatItem(
         emoji: '⏰',
         label: 'Remaining',
-        value: '${_usageStats?['remaining_daily_videos'] ?? 0}',
+        value:
+            '${_usageStats?['remaining_daily_videos'] ?? 0}',
         color: Colors.orange,
       ),
       _StatItem(
@@ -556,8 +586,10 @@ class _DashboardScreenState extends State<DashboardScreen>
       child: Container(
         padding: EdgeInsets.all(16.w),
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-              colors: [Colors.amber.shade700, Colors.orange.shade600]),
+          gradient: LinearGradient(colors: [
+            Colors.amber.shade700,
+            Colors.orange.shade600
+          ]),
           borderRadius: BorderRadius.circular(16.r),
         ),
         child: Row(
@@ -603,7 +635,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // QUICK ACTIONS — added Schedule button
+  // QUICK ACTIONS — FIX: all buttons same height
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildQuickActions() {
@@ -631,6 +663,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     ];
 
     return Row(
+      // FIX: stretch makes all children same height
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: actions.asMap().entries.map((entry) {
         final i = entry.key;
         final a = entry.value;
@@ -641,14 +675,16 @@ class _DashboardScreenState extends State<DashboardScreen>
             child: GestureDetector(
               onTap: a.onTap,
               child: Container(
-                padding: EdgeInsets.symmetric(vertical: 16.h),
+                // FIX: fixed height so all 4 are identical
+                height: 80.h,
                 decoration: BoxDecoration(
                   color: a.color.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(16.r),
-                  border:
-                      Border.all(color: a.color.withOpacity(0.2)),
+                  border: Border.all(
+                      color: a.color.withOpacity(0.2)),
                 ),
                 child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text(a.emoji,
                         style: TextStyle(fontSize: 22.sp)),
@@ -661,6 +697,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                         color: a.color,
                       ),
                       textAlign: TextAlign.center,
+                      maxLines: 2,
                     ),
                   ],
                 ),
@@ -712,7 +749,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     final duration = video['duration'] as int? ?? 0;
     final createdAt = video['created_at'] as String?;
     final niche = video['niche'] as String? ?? '';
-    final progress = (video['progress'] as num?)?.toDouble() ?? 0.0;
+    final progress =
+        (video['progress'] as num?)?.toDouble() ?? 0.0;
 
     return GestureDetector(
       onTap: () => _navigateTo(1),
@@ -727,6 +765,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         ),
         child: Row(
           children: [
+            // Thumbnail
             ClipRRect(
               borderRadius: BorderRadius.circular(12.r),
               child: SizedBox(
@@ -747,9 +786,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                           width: 28.w,
                           height: 28.w,
                           decoration: const BoxDecoration(
-                            color: Colors.black45,
-                            shape: BoxShape.circle,
-                          ),
+                              color: Colors.black45,
+                              shape: BoxShape.circle),
                           child: Icon(Icons.play_arrow,
                               color: Colors.white, size: 16.w),
                         ),
@@ -772,16 +810,18 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ),
               ),
             ),
+
             SizedBox(width: 12.w),
+
+            // Info
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title,
                       style: TextStyle(
-                        fontSize: 13.sp,
-                        fontWeight: FontWeight.w600,
-                      ),
+                          fontSize: 13.sp,
+                          fontWeight: FontWeight.w600),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis),
                   SizedBox(height: 6.h),
@@ -800,11 +840,13 @@ class _DashboardScreenState extends State<DashboardScreen>
                     SizedBox(height: 4.h),
                     Text(_formatDate(createdAt),
                         style: TextStyle(
-                            fontSize: 10.sp, color: Colors.grey)),
+                            fontSize: 10.sp,
+                            color: Colors.grey)),
                   ],
                 ],
               ),
             ),
+
             Icon(Icons.chevron_right,
                 color: Colors.grey, size: 18.w),
           ],
@@ -831,19 +873,18 @@ class _DashboardScreenState extends State<DashboardScreen>
   Widget _statusChip(String status) {
     final color = _statusColor(status);
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 7.w, vertical: 3.h),
+      padding:
+          EdgeInsets.symmetric(horizontal: 7.w, vertical: 3.h),
       decoration: BoxDecoration(
         color: color.withOpacity(0.12),
         borderRadius: BorderRadius.circular(6.r),
       ),
-      child: Text(
-        _statusLabel(status),
-        style: TextStyle(
-          fontSize: 9.sp,
-          color: color,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
+      child: Text(_statusLabel(status),
+          style: TextStyle(
+            fontSize: 9.sp,
+            color: color,
+            fontWeight: FontWeight.w700,
+          )),
     );
   }
 
@@ -867,7 +908,8 @@ class _DashboardScreenState extends State<DashboardScreen>
           Text(
             'Tap Create to generate your first AI video!',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 12.sp, color: Colors.grey),
+            style:
+                TextStyle(fontSize: 12.sp, color: Colors.grey),
           ),
           SizedBox(height: 16.h),
           ElevatedButton.icon(
@@ -887,7 +929,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // SCHEDULE OVERVIEW (from dashboard)
+  // SCHEDULE OVERVIEW — FIX: proper error handling in FutureBuilder
   // ─────────────────────────────────────────────────────────────────────────
 
   void _showScheduleOverview() {
@@ -899,20 +941,24 @@ class _DashboardScreenState extends State<DashboardScreen>
         height: MediaQuery.of(context).size.height * 0.6,
         decoration: BoxDecoration(
           color: Theme.of(context).scaffoldBackgroundColor,
-          borderRadius:
-              BorderRadius.vertical(top: Radius.circular(24.r)),
+          borderRadius: BorderRadius.vertical(
+              top: Radius.circular(24.r)),
         ),
         child: Column(
           children: [
+            // Handle
             Container(
               width: 36.w,
               height: 4.h,
-              margin: EdgeInsets.only(top: 12.h, bottom: 8.h),
+              margin:
+                  EdgeInsets.only(top: 12.h, bottom: 8.h),
               decoration: BoxDecoration(
                 color: Colors.grey.shade400,
                 borderRadius: BorderRadius.circular(2.r),
               ),
             ),
+
+            // Header
             Padding(
               padding: EdgeInsets.all(20.w),
               child: Row(
@@ -921,14 +967,16 @@ class _DashboardScreenState extends State<DashboardScreen>
                     padding: EdgeInsets.all(10.w),
                     decoration: BoxDecoration(
                       color: Colors.blue.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(12.r),
+                      borderRadius:
+                          BorderRadius.circular(12.r),
                     ),
                     child: Icon(Icons.schedule_rounded,
                         color: Colors.blue, size: 22.w),
                   ),
                   SizedBox(width: 12.w),
                   Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment:
+                        CrossAxisAlignment.start,
                     children: [
                       Text('Video Schedules',
                           style: TextStyle(
@@ -936,38 +984,111 @@ class _DashboardScreenState extends State<DashboardScreen>
                               fontWeight: FontWeight.bold)),
                       Text('Auto-generate videos daily',
                           style: TextStyle(
-                              fontSize: 11.sp, color: Colors.grey)),
+                              fontSize: 11.sp,
+                              color: Colors.grey)),
                     ],
                   ),
                 ],
               ),
             ),
+
             Divider(
-                height: 1, color: Colors.grey.withOpacity(0.1)),
+                height: 1,
+                color: Colors.grey.withOpacity(0.1)),
+
+            // Schedule list with full error handling
             Expanded(
               child: FutureBuilder<Map<String, dynamic>>(
                 future: _apiService.getSchedules(),
                 builder: (context, snapshot) {
+                  // Loading
                   if (snapshot.connectionState ==
                       ConnectionState.waiting) {
                     return const Center(
                         child: CircularProgressIndicator());
                   }
+
+                  // FIX: error state — was crashing silently before
+                  if (snapshot.hasError) {
+                    return Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(24.w),
+                        child: Column(
+                          mainAxisAlignment:
+                              MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.error_outline,
+                                size: 48.w,
+                                color: Colors.red.shade300),
+                            SizedBox(height: 12.h),
+                            Text('Could not load schedules',
+                                style: TextStyle(
+                                    fontSize: 16.sp,
+                                    fontWeight:
+                                        FontWeight.bold)),
+                            SizedBox(height: 8.h),
+                            Text(
+                              _apiService.handleError(
+                                  snapshot.error),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                  fontSize: 12.sp,
+                                  color: Colors.grey),
+                            ),
+                            SizedBox(height: 20.h),
+                            Row(
+                              mainAxisAlignment:
+                                  MainAxisAlignment.center,
+                              children: [
+                                OutlinedButton.icon(
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    _showScheduleOverview();
+                                  },
+                                  icon: const Icon(
+                                      Icons.refresh,
+                                      size: 16),
+                                  label: const Text('Retry'),
+                                ),
+                                SizedBox(width: 12.w),
+                                ElevatedButton.icon(
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    _navigateTo(1);
+                                  },
+                                  icon: const Icon(
+                                      Icons.add,
+                                      size: 16),
+                                  label: const Text(
+                                      'My Videos'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+
                   final schedules =
-                      (snapshot.data?['schedules'] ?? []) as List;
+                      (snapshot.data?['schedules'] ?? [])
+                          as List;
 
                   if (schedules.isEmpty) {
                     return Center(
                       child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisAlignment:
+                            MainAxisAlignment.center,
                         children: [
                           Text('📅',
-                              style: TextStyle(fontSize: 48.sp)),
+                              style:
+                                  TextStyle(fontSize: 48.sp)),
                           SizedBox(height: 12.h),
                           Text('No schedules yet',
                               style: TextStyle(
                                   fontSize: 16.sp,
-                                  fontWeight: FontWeight.bold)),
+                                  fontWeight:
+                                      FontWeight.bold)),
                           SizedBox(height: 8.h),
                           Text(
                             'Go to My Videos to create a schedule',
@@ -981,8 +1102,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                               Navigator.pop(context);
                               _navigateTo(1);
                             },
-                            icon: const Icon(Icons.add, size: 16),
-                            label: const Text('Create Schedule'),
+                            icon: const Icon(Icons.add,
+                                size: 16),
+                            label:
+                                const Text('Create Schedule'),
                           ),
                         ],
                       ),
@@ -999,7 +1122,13 @@ class _DashboardScreenState extends State<DashboardScreen>
                       final name =
                           s['name'] as String? ?? 'Schedule';
                       final generated =
-                          s['total_videos_generated'] as int? ?? 0;
+                          s['total_videos_generated'] as int? ??
+                              0;
+                      final frequency =
+                          s['frequency'] as String? ?? 'daily';
+                      final maxPerDay =
+                          s['max_videos_per_day'] as int? ?? 1;
+
                       return Container(
                         margin: EdgeInsets.only(bottom: 10.h),
                         padding: EdgeInsets.all(14.w),
@@ -1009,20 +1138,37 @@ class _DashboardScreenState extends State<DashboardScreen>
                               BorderRadius.circular(14.r),
                           border: Border.all(
                             color: isActive
-                                ? Colors.green.withOpacity(0.3)
-                                : Colors.grey.withOpacity(0.15),
+                                ? Colors.green
+                                    .withOpacity(0.3)
+                                : Colors.grey
+                                    .withOpacity(0.15),
                           ),
                         ),
                         child: Row(
                           children: [
-                            Icon(
-                              isActive
-                                  ? Icons.play_circle_rounded
-                                  : Icons.pause_circle_rounded,
-                              color: isActive
-                                  ? Colors.green
-                                  : Colors.grey,
-                              size: 28.w,
+                            Container(
+                              width: 40.w,
+                              height: 40.w,
+                              decoration: BoxDecoration(
+                                color: isActive
+                                    ? Colors.green
+                                        .withOpacity(0.1)
+                                    : Colors.grey
+                                        .withOpacity(0.1),
+                                borderRadius:
+                                    BorderRadius.circular(10.r),
+                              ),
+                              child: Icon(
+                                isActive
+                                    ? Icons
+                                        .play_circle_rounded
+                                    : Icons
+                                        .pause_circle_rounded,
+                                color: isActive
+                                    ? Colors.green
+                                    : Colors.grey,
+                                size: 22.w,
+                              ),
                             ),
                             SizedBox(width: 12.w),
                             Expanded(
@@ -1035,21 +1181,26 @@ class _DashboardScreenState extends State<DashboardScreen>
                                           fontSize: 14.sp,
                                           fontWeight:
                                               FontWeight.w600)),
+                                  SizedBox(height: 3.h),
                                   Text(
-                                      '$generated videos generated',
-                                      style: TextStyle(
-                                          fontSize: 11.sp,
-                                          color: Colors.grey)),
+                                    '${_capitalize(frequency)} · $maxPerDay/day · $generated made',
+                                    style: TextStyle(
+                                        fontSize: 11.sp,
+                                        color: Colors.grey),
+                                  ),
                                 ],
                               ),
                             ),
                             Container(
                               padding: EdgeInsets.symmetric(
-                                  horizontal: 10.w, vertical: 5.h),
+                                  horizontal: 10.w,
+                                  vertical: 5.h),
                               decoration: BoxDecoration(
                                 color: isActive
-                                    ? Colors.green.withOpacity(0.1)
-                                    : Colors.grey.withOpacity(0.1),
+                                    ? Colors.green
+                                        .withOpacity(0.1)
+                                    : Colors.grey
+                                        .withOpacity(0.1),
                                 borderRadius:
                                     BorderRadius.circular(8.r),
                               ),
@@ -1079,7 +1230,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // SHEETS
+  // CREDITS SHEET
   // ─────────────────────────────────────────────────────────────────────────
 
   void _showCreditsSheet() {
@@ -1090,8 +1241,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         padding: EdgeInsets.all(24.w),
         decoration: BoxDecoration(
           color: Theme.of(context).scaffoldBackgroundColor,
-          borderRadius:
-              BorderRadius.vertical(top: Radius.circular(24.r)),
+          borderRadius: BorderRadius.vertical(
+              top: Radius.circular(24.r)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1133,7 +1284,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                 children: [
                   _creditRow('🎬 Generate 1 video', '1 credit'),
                   _creditRow('📺 Watch ad', '+5 credits'),
-                  _creditRow('💎 Buy credits', 'From settings'),
+                  _creditRow(
+                      '💎 Buy credits', 'From settings'),
                 ],
               ),
             ),
@@ -1164,6 +1316,10 @@ class _DashboardScreenState extends State<DashboardScreen>
         ),
       );
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // NOTIFICATIONS SHEET
+  // ─────────────────────────────────────────────────────────────────────────
+
   void _showNotificationsSheet() {
     setState(() => _notificationCount = 0);
     showModalBottomSheet(
@@ -1173,8 +1329,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         padding: EdgeInsets.all(24.w),
         decoration: BoxDecoration(
           color: Theme.of(context).scaffoldBackgroundColor,
-          borderRadius:
-              BorderRadius.vertical(top: Radius.circular(24.r)),
+          borderRadius: BorderRadius.vertical(
+              top: Radius.circular(24.r)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1197,10 +1353,16 @@ class _DashboardScreenState extends State<DashboardScreen>
                     .titleLarge
                     ?.copyWith(fontWeight: FontWeight.bold)),
             SizedBox(height: 16.h),
-            _notifTile('🎉', 'Welcome to chAs AI Creator!',
-                'Start creating amazing videos today.', '2m ago'),
-            _notifTile('⭐', 'Upgrade Available',
-                'Get 50 videos/day with Pro plan.', '1h ago'),
+            _notifTile(
+                '🎉',
+                'Welcome to chAs AI Creator!',
+                'Start creating amazing videos today.',
+                '2m ago'),
+            _notifTile(
+                '⭐',
+                'Upgrade Available',
+                'Get 50 videos/day with Pro plan.',
+                '1h ago'),
             SizedBox(height: 8.h),
           ],
         ),
@@ -1237,12 +1399,16 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ),
           Text(time,
-              style:
-                  TextStyle(fontSize: 10.sp, color: Colors.grey)),
+              style: TextStyle(
+                  fontSize: 10.sp, color: Colors.grey)),
         ],
       ),
     );
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // UPGRADE SHEET
+  // ─────────────────────────────────────────────────────────────────────────
 
   void _showUpgradeSheet() {
     showModalBottomSheet(
@@ -1253,8 +1419,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         padding: EdgeInsets.all(24.w),
         decoration: BoxDecoration(
           color: Theme.of(context).scaffoldBackgroundColor,
-          borderRadius:
-              BorderRadius.vertical(top: Radius.circular(24.r)),
+          borderRadius: BorderRadius.vertical(
+              top: Radius.circular(24.r)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1277,20 +1443,32 @@ class _DashboardScreenState extends State<DashboardScreen>
                     ?.copyWith(fontWeight: FontWeight.bold)),
             SizedBox(height: 16.h),
             ...[
-              ('🆓 Free', ['2 videos/day', '30s max', 'Watermark'],
-                  false),
-              ('🔵 Basic',
-                  ['10 videos/day', '60s max', 'HD', 'No watermark'],
-                  false),
-              ('⭐ Pro',
-                  [
-                    '50 videos/day',
-                    '5 min max',
-                    '4K',
-                    'Priority',
-                    'All AI features'
-                  ],
-                  true),
+              (
+                '🆓 Free',
+                ['2 videos/day', '30s max', 'Watermark'],
+                false
+              ),
+              (
+                '🔵 Basic',
+                [
+                  '10 videos/day',
+                  '60s max',
+                  'HD',
+                  'No watermark'
+                ],
+                false
+              ),
+              (
+                '⭐ Pro',
+                [
+                  '50 videos/day',
+                  '5 min max',
+                  '4K',
+                  'Priority',
+                  'All AI features'
+                ],
+                true
+              ),
             ].map(
               (plan) => Container(
                 margin: EdgeInsets.only(bottom: 10.h),
@@ -1354,9 +1532,11 @@ class _DashboardScreenState extends State<DashboardScreen>
                   _navigateTo(3);
                 },
                 style: ElevatedButton.styleFrom(
-                  padding: EdgeInsets.symmetric(vertical: 14.h),
+                  padding:
+                      EdgeInsets.symmetric(vertical: 14.h),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14.r)),
+                      borderRadius:
+                          BorderRadius.circular(14.r)),
                 ),
                 child: const Text('Upgrade Now'),
               ),
@@ -1392,7 +1572,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         _ => status,
       };
 
-  String _nicheEmoji(String niche) => switch (niche.toLowerCase()) {
+  String _nicheEmoji(String niche) =>
+      switch (niche.toLowerCase()) {
         'fitness' => '💪',
         'cooking' => '🍳',
         'tech' => '💻',
@@ -1413,7 +1594,9 @@ class _DashboardScreenState extends State<DashboardScreen>
   String _formatDuration(int seconds) {
     final m = seconds ~/ 60;
     final s = seconds % 60;
-    return m > 0 ? '$m:${s.toString().padLeft(2, '0')}' : '${s}s';
+    return m > 0
+        ? '$m:${s.toString().padLeft(2, '0')}'
+        : '${s}s';
   }
 
   String _formatDate(String iso) {
@@ -1428,18 +1611,26 @@ class _DashboardScreenState extends State<DashboardScreen>
       return '';
     }
   }
+
+  String _capitalize(String s) =>
+      s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DATA CLASSES
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _StatItem {
   final String emoji;
   final String label;
   final String value;
   final Color color;
-  const _StatItem(
-      {required this.emoji,
-      required this.label,
-      required this.value,
-      required this.color});
+  const _StatItem({
+    required this.emoji,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
 }
 
 class _QuickAction {
@@ -1447,9 +1638,10 @@ class _QuickAction {
   final String label;
   final Color color;
   final VoidCallback onTap;
-  const _QuickAction(
-      {required this.emoji,
-      required this.label,
-      required this.color,
-      required this.onTap});
+  const _QuickAction({
+    required this.emoji,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
 }
