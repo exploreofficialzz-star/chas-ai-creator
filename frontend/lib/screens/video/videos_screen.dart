@@ -397,7 +397,6 @@ class _VideosScreenState extends State<VideosScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Thumbnail ──────────────────────────────────────
             ClipRRect(
               borderRadius: BorderRadius.vertical(
                   top: Radius.circular(20.r)),
@@ -430,10 +429,9 @@ class _VideosScreenState extends State<VideosScreen>
                     ),
 
                     Positioned(
-                      top: 10,
-                      left: 10,
-                      child: _buildStatusBadge(status),
-                    ),
+                        top: 10,
+                        left: 10,
+                        child: _buildStatusBadge(status)),
 
                     if (duration > 0)
                       Positioned(
@@ -447,14 +445,12 @@ class _VideosScreenState extends State<VideosScreen>
                             borderRadius:
                                 BorderRadius.circular(8.r),
                           ),
-                          child: Text(
-                            _formatDuration(duration),
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 11.sp,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
+                          child: Text(_formatDuration(duration),
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 11.sp,
+                                fontWeight: FontWeight.w600,
+                              )),
                         ),
                       ),
 
@@ -474,7 +470,6 @@ class _VideosScreenState extends State<VideosScreen>
                         ),
                       ),
 
-                    // Download progress overlay
                     if (isDownloadingThis)
                       Positioned.fill(
                         child: Container(
@@ -499,7 +494,7 @@ class _VideosScreenState extends State<VideosScreen>
                                 Text(
                                   downloadProg > 0
                                       ? '${(downloadProg * 100).toInt()}%'
-                                      : 'Downloading...',
+                                      : 'Preparing...',
                                   style: TextStyle(
                                       color: Colors.white,
                                       fontSize: 12.sp),
@@ -521,8 +516,7 @@ class _VideosScreenState extends State<VideosScreen>
                           children: [
                             Padding(
                               padding: EdgeInsets.symmetric(
-                                  horizontal: 14.w,
-                                  vertical: 6.h),
+                                  horizontal: 14.w, vertical: 6.h),
                               child: Row(
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceBetween,
@@ -544,8 +538,7 @@ class _VideosScreenState extends State<VideosScreen>
                               ),
                             ),
                             LinearProgressIndicator(
-                              value:
-                                  progress > 0 ? progress : null,
+                              value: progress > 0 ? progress : null,
                               backgroundColor:
                                   Colors.white.withOpacity(0.2),
                               color: AppTheme.primaryColor,
@@ -577,7 +570,6 @@ class _VideosScreenState extends State<VideosScreen>
               ),
             ),
 
-            // ── Info area ──────────────────────────────────────
             Padding(
               padding:
                   EdgeInsets.fromLTRB(14.w, 12.h, 14.w, 14.h),
@@ -631,9 +623,7 @@ class _VideosScreenState extends State<VideosScreen>
                           isDownloadingThis
                               ? Icons.downloading_rounded
                               : Icons.download_rounded,
-                          isDownloadingThis
-                              ? 'Downloading...'
-                              : 'Download',
+                          isDownloadingThis ? 'Saving...' : 'Download',
                           Colors.green,
                           isDownloadingThis
                               ? null
@@ -657,13 +647,11 @@ class _VideosScreenState extends State<VideosScreen>
                     children: [
                       if (niche.isNotEmpty)
                         _buildMetaChip(
-                            _nicheEmoji(niche),
-                            _capitalize(niche)),
+                            _nicheEmoji(niche), _capitalize(niche)),
                       if (style.isNotEmpty)
                         _buildMetaChip('🎨', _capitalize(style)),
                       if (createdAt != null)
-                        _buildMetaChip(
-                            '🕒', _formatDate(createdAt)),
+                        _buildMetaChip('🕒', _formatDate(createdAt)),
                     ],
                   ),
                 ],
@@ -960,11 +948,11 @@ class _VideosScreenState extends State<VideosScreen>
                 isDownloadingThis
                     ? Icons.downloading_rounded
                     : Icons.download_outlined,
-                isDownloadingThis ? 'Downloading...' : 'Download',
+                isDownloadingThis ? 'Saving...' : 'Download & Save',
                 AppTheme.primaryColor,
                 isDownloadingThis ? null : () => _downloadVideo(video),
               ),
-              _optionTile(Icons.share_outlined, 'Share',
+              _optionTile(Icons.share_outlined, 'Share Link',
                   Colors.blue, () => _shareVideo(video)),
               _optionTile(Icons.copy_outlined, 'Copy Link',
                   Colors.orange, () => _copyVideoLink(video)),
@@ -981,8 +969,7 @@ class _VideosScreenState extends State<VideosScreen>
                   AppTheme.primaryColor,
                   () => _showProgress(video)),
             Divider(
-                height: 8,
-                color: Colors.grey.withOpacity(0.1)),
+                height: 8, color: Colors.grey.withOpacity(0.1)),
             _optionTile(Icons.delete_outline_rounded,
                 'Delete Video', Colors.red,
                 () => _showDeleteDialog(video)),
@@ -1026,7 +1013,7 @@ class _VideosScreenState extends State<VideosScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // SCHEDULE SHEET — FIX: proper error handling in FutureBuilder
+  // SCHEDULE SHEET
   // ─────────────────────────────────────────────────────────────────────────
 
   void _showScheduleSheet() {
@@ -1130,14 +1117,11 @@ class _VideosScreenState extends State<VideosScreen>
                 child: FutureBuilder<Map<String, dynamic>>(
                   future: _apiService.getSchedules(),
                   builder: (context, snapshot) {
-                    // FIX: handle loading state
                     if (snapshot.connectionState ==
                         ConnectionState.waiting) {
                       return const Center(
                           child: CircularProgressIndicator());
                     }
-
-                    // FIX: handle error state — was crashing silently
                     if (snapshot.hasError) {
                       return Center(
                         child: Column(
@@ -1155,8 +1139,8 @@ class _VideosScreenState extends State<VideosScreen>
                                         FontWeight.bold)),
                             SizedBox(height: 8.h),
                             Text(
-                              _apiService.handleError(
-                                  snapshot.error),
+                              _apiService
+                                  .handleError(snapshot.error),
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                   fontSize: 12.sp,
@@ -1168,8 +1152,8 @@ class _VideosScreenState extends State<VideosScreen>
                                 Navigator.pop(context);
                                 _showScheduleSheet();
                               },
-                              icon: const Icon(
-                                  Icons.refresh, size: 16),
+                              icon: const Icon(Icons.refresh,
+                                  size: 16),
                               label: const Text('Retry'),
                             ),
                           ],
@@ -1389,8 +1373,8 @@ class _VideosScreenState extends State<VideosScreen>
                       icon: const Icon(
                           Icons.remove_circle_outline),
                       onPressed: maxPerDay > 1
-                          ? () => setDialogState(
-                              () => maxPerDay--)
+                          ? () =>
+                              setDialogState(() => maxPerDay--)
                           : null,
                     ),
                     Text('$maxPerDay',
@@ -1401,8 +1385,8 @@ class _VideosScreenState extends State<VideosScreen>
                       icon: const Icon(
                           Icons.add_circle_outline),
                       onPressed: maxPerDay < 10
-                          ? () => setDialogState(
-                              () => maxPerDay++)
+                          ? () =>
+                              setDialogState(() => maxPerDay++)
                           : null,
                     ),
                   ],
@@ -1568,44 +1552,40 @@ class _VideosScreenState extends State<VideosScreen>
   // ACTIONS
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// FIX: Opens video in-app using chewie + video_player.
-  /// url_launcher cannot open Cloudinary video URLs directly on Android
-  /// because there is no registered app handler for .mp4 HTTPS URLs.
-  /// Using chewie gives a proper fullscreen video player experience.
   Future<void> _openVideo(dynamic video) async {
     final url = video['video_url'] as String?;
     final title = video['title'] as String? ?? 'Video';
-
     if (url == null || url.isEmpty) {
       _showToast('⏳ Video is not ready yet', error: true);
       return;
     }
-
-    // Show in-app video player dialog
     await showDialog(
       context: context,
       barrierDismissible: true,
-      builder: (_) => _VideoPlayerDialog(
-        videoUrl: url,
-        title: title,
-      ),
+      builder: (_) =>
+          _VideoPlayerDialog(videoUrl: url, title: title),
     );
   }
 
-  /// FIX: Removed storage permission check entirely.
-  /// getApplicationDocumentsDirectory() is the app's private directory —
-  /// it requires ZERO permissions on ALL Android versions (including 13+).
-  /// Permission.storage only applies to PUBLIC downloads folder.
+  /// FIX: Download to temp directory then open native share sheet.
+  /// getApplicationDocumentsDirectory() is hidden from user's file manager.
+  /// Using Share.shareXFiles() opens the native Android/iOS share sheet
+  /// where the user can:
+  ///  - "Save to Downloads" (Android)
+  ///  - "Save to Files" (iOS)
+  ///  - Send via WhatsApp, Telegram, etc.
+  /// No storage permissions needed — temp directory is always writable.
   Future<void> _downloadVideo(dynamic video) async {
     final url = video['video_url'] as String?;
-    final title = (video['title'] as String? ?? 'video')
+    final rawTitle = video['title'] as String? ?? 'video';
+    final title = rawTitle
         .replaceAll(RegExp(r'[^\w\s-]'), '')
-        .replaceAll(' ', '_');
+        .replaceAll(' ', '_')
+        .toLowerCase();
     final videoId = video['id'] as String? ?? '';
 
     if (url == null || url.isEmpty) {
-      _showToast('❌ Video not available for download',
-          error: true);
+      _showToast('❌ Video not available for download', error: true);
       return;
     }
 
@@ -1615,10 +1595,10 @@ class _VideosScreenState extends State<VideosScreen>
     });
 
     try {
-      // FIX: App documents dir needs NO permission on any Android version
-      final dir = await getApplicationDocumentsDirectory();
-      final savePath =
-          '${dir.path}/${title}_${videoId.substring(0, 8)}.mp4';
+      // Save to temp directory — always writable, no permissions needed
+      final dir = await getTemporaryDirectory();
+      final fileName = '${title}_${videoId.substring(0, 8)}.mp4';
+      final savePath = '${dir.path}/$fileName';
 
       final dio = Dio();
       await dio.download(
@@ -1638,7 +1618,13 @@ class _VideosScreenState extends State<VideosScreen>
           _isDownloading[videoId] = false;
           _downloadProgress.remove(videoId);
         });
-        _showToast('✅ Video saved to Documents!');
+
+        // Open native share sheet — user can save to Downloads, Gallery, etc.
+        await Share.shareXFiles(
+          [XFile(savePath, mimeType: 'video/mp4', name: fileName)],
+          subject: rawTitle,
+          text: '🎬 $rawTitle - Created with chAs AI Creator',
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -1655,19 +1641,17 @@ class _VideosScreenState extends State<VideosScreen>
     final url = video['video_url'] as String?;
     final title =
         video['title'] as String? ?? 'Check out my AI video!';
-
     if (url == null || url.isEmpty) {
       _showToast('❌ Video not ready to share', error: true);
       return;
     }
-
     try {
       await Share.share(
         '🎬 $title\n\nCreated with chAs AI Creator\n\n$url',
         subject: title,
       );
     } catch (e) {
-      _showToast('❌ Could not share video: $e', error: true);
+      _showToast('❌ Could not share: $e', error: true);
     }
   }
 
@@ -1737,7 +1721,7 @@ class _VideosScreenState extends State<VideosScreen>
             borderRadius: BorderRadius.circular(16.r)),
         title: const Text('Delete Video'),
         content: const Text(
-            'Are you sure? This will permanently delete the video and cannot be undone.'),
+            'Are you sure? This will permanently delete the video.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -1756,8 +1740,8 @@ class _VideosScreenState extends State<VideosScreen>
                     error: true);
               }
             },
-            style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red),
+            style:
+                ElevatedButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Delete',
                 style: TextStyle(color: Colors.white)),
           ),
@@ -1840,20 +1824,13 @@ class _VideosScreenState extends State<VideosScreen>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // IN-APP VIDEO PLAYER DIALOG
-// FIX: Uses chewie + video_player instead of url_launcher.
-// Cloudinary HTTPS video URLs cannot be opened by url_launcher on Android
-// because there is no system app registered for .mp4 HTTPS links.
-// Chewie provides a proper fullscreen player with controls.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _VideoPlayerDialog extends StatefulWidget {
   final String videoUrl;
   final String title;
-
-  const _VideoPlayerDialog({
-    required this.videoUrl,
-    required this.title,
-  });
+  const _VideoPlayerDialog(
+      {required this.videoUrl, required this.title});
 
   @override
   State<_VideoPlayerDialog> createState() =>
@@ -1875,12 +1852,10 @@ class _VideoPlayerDialogState
 
   Future<void> _initPlayer() async {
     try {
-      _videoPlayerController = VideoPlayerController.networkUrl(
-        Uri.parse(widget.videoUrl),
-      );
-
+      _videoPlayerController =
+          VideoPlayerController.networkUrl(
+              Uri.parse(widget.videoUrl));
       await _videoPlayerController.initialize();
-
       _chewieController = ChewieController(
         videoPlayerController: _videoPlayerController,
         autoPlay: true,
@@ -1889,20 +1864,18 @@ class _VideoPlayerDialogState
         allowMuting: true,
         showControls: true,
         placeholder: Container(
-          color: Colors.black,
-          child: const Center(
-            child: CircularProgressIndicator(
-                color: Colors.white),
-          ),
-        ),
+            color: Colors.black,
+            child: const Center(
+                child: CircularProgressIndicator(
+                    color: Colors.white))),
       );
-
       if (mounted) setState(() => _isInitializing = false);
     } catch (e) {
       if (mounted) {
         setState(() {
           _isInitializing = false;
-          _error = 'Could not load video. Tap below to open in browser.';
+          _error =
+              'Could not load video. Tap below to open in browser.';
         });
       }
     }
@@ -1925,21 +1898,18 @@ class _VideoPlayerDialogState
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Header
           Padding(
             padding: EdgeInsets.symmetric(
                 horizontal: 16.w, vertical: 12.h),
             child: Row(
               children: [
                 Expanded(
-                  child: Text(
-                    widget.title,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                  child: Text(widget.title,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
                 ),
                 IconButton(
                   icon: const Icon(Icons.close,
@@ -1949,8 +1919,6 @@ class _VideoPlayerDialogState
               ],
             ),
           ),
-
-          // Player
           AspectRatio(
             aspectRatio: 9 / 16,
             child: _isInitializing
@@ -1961,7 +1929,6 @@ class _VideoPlayerDialogState
                     ? _buildErrorState()
                     : Chewie(controller: _chewieController!),
           ),
-
           SizedBox(height: 8.h),
         ],
       ),
@@ -1978,12 +1945,10 @@ class _VideoPlayerDialogState
             const Icon(Icons.error_outline,
                 color: Colors.white54, size: 48),
             const SizedBox(height: 12),
-            Text(
-              _error ?? 'Playback error',
-              style: const TextStyle(
-                  color: Colors.white70, fontSize: 13),
-              textAlign: TextAlign.center,
-            ),
+            Text(_error ?? 'Playback error',
+                style: const TextStyle(
+                    color: Colors.white70, fontSize: 13),
+                textAlign: TextAlign.center),
             const SizedBox(height: 16),
             ElevatedButton.icon(
               onPressed: () async {
@@ -1993,12 +1958,10 @@ class _VideoPlayerDialogState
                       mode: LaunchMode.externalApplication);
                 }
               },
-              icon: const Icon(Icons.open_in_browser,
-                  size: 16),
+              icon: const Icon(Icons.open_in_browser, size: 16),
               label: const Text('Open in Browser'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primaryColor,
-              ),
+                  backgroundColor: AppTheme.primaryColor),
             ),
           ],
         ),
