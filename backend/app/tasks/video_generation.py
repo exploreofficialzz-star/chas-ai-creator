@@ -1,6 +1,17 @@
 """
 Video generation background task.
 FILE: app/tasks/video_generation.py
+
+FIX: psycopg2.OperationalError — server closed the connection unexpectedly.
+     The DB connection was held open for ~10 minutes while generating 10 images
+     (~60s each). Supabase closes idle connections after a few minutes.
+     When all 10 scenes tried to INSERT in one bulk commit, the connection was dead.
+
+     Fixed in _generate_scenes():
+     - Commit each scene individually right after db.add() instead of
+       accumulating all 10 and doing one bulk commit at the end.
+     - Added _reconnect_if_needed() to restore a dropped connection.
+     - 3 retry attempts per scene with fresh session on failure.
 """
 
 import asyncio
@@ -81,6 +92,23 @@ def _video_type_str(video: Video) -> str:
     return vt.value if hasattr(vt, "value") else str(vt)
 
 
+def _reconnect_if_needed(db: Session) -> Session:
+    """
+    FIX — Test connection health and return fresh session if dead.
+    Supabase closes idle connections after ~5 minutes.
+    """
+    try:
+        db.execute("SELECT 1")
+        return db
+    except Exception:
+        logger.warning("DB connection lost — opening fresh session")
+        try:
+            db.close()
+        except Exception:
+            pass
+        return SessionLocal()
+
+
 # ── Main task ─────────────────────────────────────────────────────────────────
 
 async def generate_video_task(video_id: str) -> Dict[str, Any]:
@@ -113,7 +141,6 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
         # ── STEP 1 — Script ───────────────────────────────────────────────────
         logger.info(f"Generating script: {video_id}")
 
-        # FIX: Use text_generation.py (the actual file on server)
         try:
             from app.services.ai.text_generation import TextGenerationService, AIGenerationError
             text_svc = TextGenerationService()
@@ -159,7 +186,8 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
             logger.info(f"Using {len(existing_scenes)} existing scenes from smart_generate")
             scenes = existing_scenes
         else:
-            scenes = await _generate_scenes(db, video, script, style_str)
+            # FIX — _generate_scenes now returns (scenes, db) since db may reconnect
+            scenes, db = await _generate_scenes(db, video, script, style_str)
 
         if not scenes:
             raise RuntimeError("No scenes generated successfully")
@@ -296,13 +324,20 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Video generation FAILED: {video_id} — {e}", exc_info=True)
         if video:
-            video.status        = _safe_status("failed")
-            video.progress      = 0
-            video.error_message = str(e)[:500]
             try:
-                db.commit()
-            except Exception:
-                db.rollback()
+                db = _reconnect_if_needed(db)
+                video2 = db.query(Video).filter(Video.id == video_id).first()
+                if video2:
+                    video2.status        = _safe_status("failed")
+                    video2.progress      = 0
+                    video2.error_message = str(e)[:500]
+                    db.commit()
+            except Exception as e2:
+                logger.error(f"Could not save failure status: {e2}")
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
         return {"status": "error", "video_id": video_id, "error": str(e)}
 
     finally:
@@ -316,9 +351,22 @@ async def _generate_scenes(
     video: Video,
     script: Dict,
     style_str: str,
-) -> List[VideoScene]:
-    """Generate images for each scene and save to DB."""
+) -> tuple:
+    """
+    Generate images for each scene and save to DB one at a time.
 
+    FIX — CRITICAL: Previously accumulated all scenes then did one bulk
+    db.commit() at the end. With 10 scenes × ~60s each = ~10 minutes,
+    Supabase closes the idle connection and the bulk INSERT crashes with:
+    'psycopg2.OperationalError: server closed the connection unexpectedly'
+
+    Now:
+    - Commit each scene individually immediately after db.add()
+    - Reconnect automatically if connection dropped between scenes
+    - 3 retry attempts per scene with fresh session on failure
+
+    Returns (scenes_list, db) — db may be a new session if reconnected.
+    """
     image_svc = None
     try:
         from app.services.ai.image_generation import ImageGenerationService
@@ -333,27 +381,31 @@ async def _generate_scenes(
         if getattr(video, "character_consistency_enabled", False)
         else None
     )
+    video_id     = video.id
+    aspect_ratio = video.aspect_ratio
+    duration     = video.duration
 
     for i, scene_data in enumerate(script_scenes):
+        # Generate image for this scene
         image_url = None
         if image_svc:
             try:
                 image_url = await image_svc.generate_image(
                     prompt=scene_data.get("image_prompt") or scene_data.get("description", ""),
                     style=style_str,
-                    aspect_ratio=video.aspect_ratio,
+                    aspect_ratio=aspect_ratio,
                     character_consistency=char_ref,
                 )
             except Exception as e:
                 logger.error(f"Image {i+1} failed: {e}")
 
         scene_duration = scene_data.get("duration", None) or (
-            video.duration / max(len(script_scenes), 1)
+            duration / max(len(script_scenes), 1)
         )
 
         scene = VideoScene(
             id=str(uuid.uuid4()),
-            video_id=video.id,
+            video_id=video_id,
             scene_number=scene_data.get("scene_number", i + 1),
             description=scene_data.get("description", ""),
             caption=scene_data.get("caption"),
@@ -363,12 +415,41 @@ async def _generate_scenes(
             duration=scene_duration,
             status="completed" if image_url else "pending",
         )
-        db.add(scene)
-        scenes.append(scene)
-        logger.info(f"Scene {i+1}/{len(script_scenes)} ready")
 
-    db.commit()
-    return scenes
+        # FIX — commit each scene one at a time with reconnect + retry
+        committed = False
+        for attempt in range(3):
+            try:
+                db = _reconnect_if_needed(db)
+                db.add(scene)
+                db.commit()
+                committed = True
+                break
+            except Exception as e:
+                logger.warning(
+                    f"Scene {i+1} commit attempt {attempt+1} failed: {e}"
+                )
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                if attempt < 2:
+                    try:
+                        db.close()
+                    except Exception:
+                        pass
+                    db = SessionLocal()
+                    await asyncio.sleep(1.0)
+
+        if committed:
+            scenes.append(scene)
+            logger.info(f"Scene {i+1}/{len(script_scenes)} ready")
+        else:
+            logger.error(
+                f"Scene {i+1} failed to save after 3 attempts — skipping"
+            )
+
+    return scenes, db
 
 
 # ── Scheduled tasks ───────────────────────────────────────────────────────────
