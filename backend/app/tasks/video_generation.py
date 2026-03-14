@@ -32,10 +32,6 @@ def _safe_set(obj: Any, attr: str, value: Any) -> None:
 
 
 def _safe_status(preferred: str) -> VideoStatus:
-    """
-    Return the preferred VideoStatus if it exists, otherwise
-    return the nearest fallback that always exists.
-    """
     FALLBACKS = {
         "script_generating": ["SCRIPT_GENERATING", "PENDING"],
         "images_generating": ["IMAGES_GENERATING", "PENDING"],
@@ -53,7 +49,6 @@ def _safe_status(preferred: str) -> VideoStatus:
             return VideoStatus[name]
         except KeyError:
             continue
-    # Absolute fallback
     for name in ["PENDING", "FAILED"]:
         try:
             return VideoStatus[name]
@@ -102,7 +97,6 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
             logger.error(f"Video not found: {video_id}")
             return {"status": "error", "message": "Video not found"}
 
-        # Mark started
         _safe_set(video, "started_at", datetime.utcnow())
         _update_progress(db, video, "script_generating", 5)
 
@@ -119,12 +113,12 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
         # ── STEP 1 — Script ───────────────────────────────────────────────────
         logger.info(f"Generating script: {video_id}")
 
-        # FIX: Import from script_generation (not text_generation)
+        # FIX: Use text_generation.py (the actual file on server)
         try:
-            from app.services.ai.script_generation import ScriptGenerationService, AIGenerationError
-            text_svc = ScriptGenerationService()
+            from app.services.ai.text_generation import TextGenerationService, AIGenerationError
+            text_svc = TextGenerationService()
         except ImportError as e:
-            raise RuntimeError(f"ScriptGenerationService not available: {e}")
+            raise RuntimeError(f"TextGenerationService not available: {e}")
 
         try:
             script = await text_svc.generate_script(
@@ -146,7 +140,6 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
         _safe_set(video, "narration_text", script.get("narration"))
         _safe_set(video, "hashtags",       script.get("hashtags", []))
 
-        # Always update title/description directly (these columns always exist)
         if not getattr(video, "title", None):
             video.title = script.get("title") or "Untitled Video"
         if not getattr(video, "description", None):
@@ -158,15 +151,12 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
         # ── STEP 2 — Images / Scenes ──────────────────────────────────────────
         logger.info(f"Generating images: {video_id}")
 
-        # Check if smart_generate already created scenes — don't duplicate them
         existing_scenes: List[VideoScene] = db.query(VideoScene).filter(
             VideoScene.video_id == video_id
         ).order_by(VideoScene.scene_number).all()
 
         if existing_scenes:
-            logger.info(
-                f"Using {len(existing_scenes)} existing scenes from smart_generate"
-            )
+            logger.info(f"Using {len(existing_scenes)} existing scenes from smart_generate")
             scenes = existing_scenes
         else:
             scenes = await _generate_scenes(db, video, script, style_str)
@@ -202,7 +192,6 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
                 logger.error(f"Clip {i+1} failed ({e}) — using image fallback")
                 scene.video_clip_url = scene.image_url
 
-            # Commit every 3 scenes to reduce DB overhead
             if (i + 1) % 3 == 0:
                 progress = 45 + int((i + 1) / max(len(scenes), 1) * 20)
                 _update_progress(db, video, "video_generating", progress)
@@ -230,7 +219,7 @@ async def generate_video_task(video_id: str) -> Dict[str, Any]:
             except Exception as e:
                 logger.error(f"Voice generation failed ({e}) — continuing without audio")
 
-        # ── STEP 5 — Compose ─────────────────────────────────────────────────
+        # ── STEP 5 — Compose ──────────────────────────────────────────────────
         logger.info(f"Composing final video: {video_id}")
         _update_progress(db, video, "composing", 80)
 
