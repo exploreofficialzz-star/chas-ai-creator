@@ -19,11 +19,6 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
 
-  // FIX 1 — DashboardScreen built lazily so it doesn't call
-  // initState until actually visited. Previously IndexedStack
-  // forced ALL 4 screens to initState simultaneously the moment
-  // HomeScreen mounted. Any AuthBloc event fired in DashboardScreen
-  // initState would cycle auth state and blank the screen on first login.
   DashboardScreen? _dashboardCache;
   DashboardScreen get _dashboard {
     _dashboardCache ??= DashboardScreen(
@@ -36,25 +31,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // FIX 2 — BlocListener only resets the tab index on logout.
-    // It must NEVER call Navigator — app.dart BlocBuilder is the
-    // sole navigation authority. Any Navigator call here would push
-    // a route on top of app.dart's widget tree causing a blank screen.
     return BlocListener<AuthBloc, AuthState>(
       listenWhen: (previous, current) =>
-          current is Unauthenticated ||
-          current is AuthInitial,
+          current is Unauthenticated || current is AuthInitial,
       listener: (context, state) {
-        // Only reset tab — never navigate
         if (mounted) setState(() => _currentIndex = 0);
       },
       child: Scaffold(
-        // FIX 3 — Offstage + TickerMode instead of IndexedStack.
-        // Offstage keeps each screen alive (preserves scroll + state)
-        // but only triggers initState when the screen is first made
-        // visible — NOT all at once on HomeScreen mount.
-        // TickerMode pauses animations on hidden screens so they
-        // don't consume resources in the background.
         body: Stack(
           children: [
             _buildScreen(0, _dashboard),
@@ -98,40 +81,27 @@ class _HomeScreenState extends State<HomeScreen> {
         labelBehavior:
             NavigationDestinationLabelBehavior.alwaysShow,
         destinations: [
-          // Dashboard
           NavigationDestination(
             icon: const Icon(Icons.dashboard_outlined),
-            selectedIcon: Icon(
-              Icons.dashboard,
-              color: AppTheme.primaryColor,
-            ),
+            selectedIcon:
+                Icon(Icons.dashboard, color: AppTheme.primaryColor),
             label: 'Dashboard',
           ),
-
-          // My Videos
           NavigationDestination(
             icon: const Icon(Icons.video_library_outlined),
-            selectedIcon: Icon(
-              Icons.video_library,
-              color: AppTheme.primaryColor,
-            ),
+            selectedIcon: Icon(Icons.video_library,
+                color: AppTheme.primaryColor),
             label: 'My Videos',
           ),
-
-          // Smart Create — highlighted centre button
           NavigationDestination(
             icon: _buildCreateIcon(selected: false),
             selectedIcon: _buildCreateIcon(selected: true),
             label: 'Create',
           ),
-
-          // Settings
           NavigationDestination(
             icon: const Icon(Icons.settings_outlined),
-            selectedIcon: Icon(
-              Icons.settings,
-              color: AppTheme.primaryColor,
-            ),
+            selectedIcon:
+                Icon(Icons.settings, color: AppTheme.primaryColor),
             label: 'Settings',
           ),
         ],
@@ -139,8 +109,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // FIX 4 — extracted to method so icon is not rebuilt
-  // as a new Container instance on every setState call
   Widget _buildCreateIcon({required bool selected}) {
     return Container(
       padding: EdgeInsets.all(10.w),
@@ -156,11 +124,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      child: Icon(
-        Icons.auto_awesome,
-        size: 22.w,
-        color: Colors.white,
-      ),
+      child: Icon(Icons.auto_awesome, size: 22.w, color: Colors.white),
     );
   }
 }
