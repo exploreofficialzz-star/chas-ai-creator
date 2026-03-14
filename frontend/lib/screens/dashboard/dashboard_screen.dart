@@ -3,13 +3,15 @@
  * FILE: lib/screens/dashboard/dashboard_screen.dart
  *
  * FIXES IN THIS VERSION:
- * 1. Quick action buttons all same height — fixed with height: 80.h
- *    and crossAxisAlignment: CrossAxisAlignment.stretch
- * 2. Schedule overview FutureBuilder has proper error handling —
- *    no more silent crash when API fails
- * 3. Auth guard on all API calls — never fires before token is ready
- * 4. Interstitial ad deferred 3s — never interferes with auth state
- * 5. signOut() never called from API interceptor
+ * 1. CRITICAL — Quick actions invisible after last fix.
+ *    crossAxisAlignment: CrossAxisAlignment.stretch on a Row inside
+ *    ListView gives the Row zero unconstrained height — all 4 buttons
+ *    rendered at 0px. Fix: removed CrossAxisAlignment.stretch entirely.
+ *    height: 80.h on each Container is enough to make them equal size.
+ * 2. Schedule overview FutureBuilder has proper error handling.
+ * 3. Auth guard on all API calls.
+ * 4. Interstitial ad deferred 3s.
+ * 5. signOut() never called from API interceptor.
  */
 
 import 'package:flutter/material.dart';
@@ -176,15 +178,12 @@ class _DashboardScreenState extends State<DashboardScreen>
           appBar: _buildAppBar(user),
           body: Column(
             children: [
-              // Static welcome card — never scrolls
               Container(
                 color: Theme.of(context).scaffoldBackgroundColor,
                 padding:
                     EdgeInsets.fromLTRB(16.w, 12.h, 16.w, 12.h),
                 child: _buildWelcomeCard(user),
               ),
-
-              // Scrollable content
               Expanded(
                 child: _isLoading
                     ? const Center(
@@ -200,32 +199,25 @@ class _DashboardScreenState extends State<DashboardScreen>
                             children: [
                               _buildDailyUsageBar(),
                               SizedBox(height: 20.h),
-
                               _buildSectionTitle('📊 Your Stats'),
                               SizedBox(height: 12.h),
                               _buildStatsGrid(),
                               SizedBox(height: 20.h),
-
-                              // Upgrade banner (free tier only)
                               if ((user?.subscriptionTier ?? 'free')
                                       .toLowerCase() ==
                                   'free') ...[
                                 _buildUpgradeBanner(),
                                 SizedBox(height: 20.h),
                               ],
-
                               RewardAdButton(
                                   onRewardEarned: _onCreditsEarned),
                               SizedBox(height: 20.h),
-
                               _buildSectionTitle('⚡ Quick Actions'),
                               SizedBox(height: 12.h),
                               _buildQuickActions(),
                               SizedBox(height: 20.h),
-
                               const BannerAdContainer(),
                               SizedBox(height: 20.h),
-
                               _buildRecentVideos(),
                             ],
                           ),
@@ -256,7 +248,6 @@ class _DashboardScreenState extends State<DashboardScreen>
         ],
       ),
       actions: [
-        // Credits chip
         GestureDetector(
           onTap: _showCreditsSheet,
           child: Container(
@@ -284,8 +275,6 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ),
         ),
-
-        // Notification bell with badge
         Stack(
           clipBehavior: Clip.none,
           children: [
@@ -348,7 +337,6 @@ class _DashboardScreenState extends State<DashboardScreen>
       ),
       child: Row(
         children: [
-          // Avatar
           Container(
             width: 60.w,
             height: 60.w,
@@ -366,8 +354,6 @@ class _DashboardScreenState extends State<DashboardScreen>
                 : _avatarText(initial),
           ),
           SizedBox(width: 16.w),
-
-          // Info
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -376,16 +362,14 @@ class _DashboardScreenState extends State<DashboardScreen>
                     style: TextStyle(
                         fontSize: 13.sp, color: Colors.white70)),
                 SizedBox(height: 3.h),
-                Text(
-                  name,
-                  style: TextStyle(
-                    fontSize: 20.sp,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                Text(name,
+                    style: TextStyle(
+                      fontSize: 20.sp,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
                 SizedBox(height: 10.h),
                 Row(
                   children: [
@@ -635,7 +619,12 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // QUICK ACTIONS — FIX: all buttons same height
+  // QUICK ACTIONS
+  // FIX: Removed crossAxisAlignment: CrossAxisAlignment.stretch from Row.
+  // Inside a ListView, Row has no constrained height so .stretch makes
+  // all children render at 0px height — completely invisible.
+  // Fix: just use height: 80.h directly on each Container. That alone
+  // makes all 4 buttons the same size without needing .stretch.
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildQuickActions() {
@@ -662,9 +651,9 @@ class _DashboardScreenState extends State<DashboardScreen>
           onTap: _showUpgradeSheet),
     ];
 
+    // FIX: No crossAxisAlignment: CrossAxisAlignment.stretch
+    // height: 80.h on each Container makes them all equal size
     return Row(
-      // FIX: stretch makes all children same height
-      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: actions.asMap().entries.map((entry) {
         final i = entry.key;
         final a = entry.value;
@@ -675,7 +664,6 @@ class _DashboardScreenState extends State<DashboardScreen>
             child: GestureDetector(
               onTap: a.onTap,
               child: Container(
-                // FIX: fixed height so all 4 are identical
                 height: 80.h,
                 decoration: BoxDecoration(
                   color: a.color.withOpacity(0.1),
@@ -765,7 +753,6 @@ class _DashboardScreenState extends State<DashboardScreen>
         ),
         child: Row(
           children: [
-            // Thumbnail
             ClipRRect(
               borderRadius: BorderRadius.circular(12.r),
               child: SizedBox(
@@ -789,7 +776,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                               color: Colors.black45,
                               shape: BoxShape.circle),
                           child: Icon(Icons.play_arrow,
-                              color: Colors.white, size: 16.w),
+                              color: Colors.white,
+                              size: 16.w),
                         ),
                       ),
                     if (status == 'processing' ||
@@ -799,7 +787,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                         left: 0,
                         right: 0,
                         child: LinearProgressIndicator(
-                          value: progress > 0 ? progress : null,
+                          value:
+                              progress > 0 ? progress : null,
                           minHeight: 3,
                           backgroundColor:
                               Colors.white.withOpacity(0.2),
@@ -810,10 +799,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ),
               ),
             ),
-
             SizedBox(width: 12.w),
-
-            // Info
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -846,7 +832,6 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ],
               ),
             ),
-
             Icon(Icons.chevron_right,
                 color: Colors.grey, size: 18.w),
           ],
@@ -903,7 +888,8 @@ class _DashboardScreenState extends State<DashboardScreen>
           SizedBox(height: 12.h),
           Text('No videos yet',
               style: TextStyle(
-                  fontSize: 16.sp, fontWeight: FontWeight.bold)),
+                  fontSize: 16.sp,
+                  fontWeight: FontWeight.bold)),
           SizedBox(height: 6.h),
           Text(
             'Tap Create to generate your first AI video!',
@@ -929,7 +915,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // SCHEDULE OVERVIEW — FIX: proper error handling in FutureBuilder
+  // SCHEDULE OVERVIEW — with proper error handling
   // ─────────────────────────────────────────────────────────────────────────
 
   void _showScheduleOverview() {
@@ -946,7 +932,6 @@ class _DashboardScreenState extends State<DashboardScreen>
         ),
         child: Column(
           children: [
-            // Handle
             Container(
               width: 36.w,
               height: 4.h,
@@ -957,8 +942,6 @@ class _DashboardScreenState extends State<DashboardScreen>
                 borderRadius: BorderRadius.circular(2.r),
               ),
             ),
-
-            // Header
             Padding(
               padding: EdgeInsets.all(20.w),
               child: Row(
@@ -991,24 +974,20 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ],
               ),
             ),
-
             Divider(
                 height: 1,
                 color: Colors.grey.withOpacity(0.1)),
-
-            // Schedule list with full error handling
             Expanded(
               child: FutureBuilder<Map<String, dynamic>>(
                 future: _apiService.getSchedules(),
                 builder: (context, snapshot) {
-                  // Loading
                   if (snapshot.connectionState ==
                       ConnectionState.waiting) {
                     return const Center(
                         child: CircularProgressIndicator());
                   }
 
-                  // FIX: error state — was crashing silently before
+                  // FIX: proper error state — no more silent crash
                   if (snapshot.hasError) {
                     return Center(
                       child: Padding(
@@ -1021,7 +1000,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                                 size: 48.w,
                                 color: Colors.red.shade300),
                             SizedBox(height: 12.h),
-                            Text('Could not load schedules',
+                            Text(
+                                'Could not load schedules',
                                 style: TextStyle(
                                     fontSize: 16.sp,
                                     fontWeight:
@@ -1048,7 +1028,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                                   icon: const Icon(
                                       Icons.refresh,
                                       size: 16),
-                                  label: const Text('Retry'),
+                                  label:
+                                      const Text('Retry'),
                                 ),
                                 SizedBox(width: 12.w),
                                 ElevatedButton.icon(
@@ -1104,8 +1085,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                             },
                             icon: const Icon(Icons.add,
                                 size: 16),
-                            label:
-                                const Text('Create Schedule'),
+                            label: const Text(
+                                'Create Schedule'),
                           ),
                         ],
                       ),
@@ -1156,7 +1137,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                                     : Colors.grey
                                         .withOpacity(0.1),
                                 borderRadius:
-                                    BorderRadius.circular(10.r),
+                                    BorderRadius.circular(
+                                        10.r),
                               ),
                               child: Icon(
                                 isActive
@@ -1180,7 +1162,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                                       style: TextStyle(
                                           fontSize: 14.sp,
                                           fontWeight:
-                                              FontWeight.w600)),
+                                              FontWeight
+                                                  .w600)),
                                   SizedBox(height: 3.h),
                                   Text(
                                     '${_capitalize(frequency)} · $maxPerDay/day · $generated made',
@@ -1202,7 +1185,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                                     : Colors.grey
                                         .withOpacity(0.1),
                                 borderRadius:
-                                    BorderRadius.circular(8.r),
+                                    BorderRadius.circular(
+                                        8.r),
                               ),
                               child: Text(
                                 isActive ? 'Active' : 'Paused',
@@ -1277,12 +1261,14 @@ class _DashboardScreenState extends State<DashboardScreen>
             Container(
               padding: EdgeInsets.all(14.w),
               decoration: BoxDecoration(
-                color: AppTheme.primaryColor.withOpacity(0.06),
+                color:
+                    AppTheme.primaryColor.withOpacity(0.06),
                 borderRadius: BorderRadius.circular(14.r),
               ),
               child: Column(
                 children: [
-                  _creditRow('🎬 Generate 1 video', '1 credit'),
+                  _creditRow(
+                      '🎬 Generate 1 video', '1 credit'),
                   _creditRow('📺 Watch ad', '+5 credits'),
                   _creditRow(
                       '💎 Buy credits', 'From settings'),
@@ -1495,7 +1481,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                           Text(plan.$1,
                               style: TextStyle(
                                   fontSize: 14.sp,
-                                  fontWeight: FontWeight.bold)),
+                                  fontWeight:
+                                      FontWeight.bold)),
                           SizedBox(height: 4.h),
                           ...plan.$2.map((f) => Text('✓ $f',
                               style: TextStyle(
@@ -1517,7 +1504,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                             style: TextStyle(
                                 fontSize: 11.sp,
                                 color: Colors.white,
-                                fontWeight: FontWeight.bold)),
+                                fontWeight:
+                                    FontWeight.bold)),
                       ),
                   ],
                 ),
