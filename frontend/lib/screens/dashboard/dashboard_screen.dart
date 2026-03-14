@@ -1,11 +1,6 @@
 /*
  * chAs AI Creator - Dashboard Screen
- * Enhanced Global Professional Version
- * FIX: Welcome card is now STATIC (pinned), only content below scrolls
- * FIX: _loadData() deferred to postFrameCallback — no API calls
- *      before auth token is stable on first login
- * FIX: showInterstitialAd() deferred + guarded
- * FIX: API 401 errors handled silently — never affect AuthBloc
+ * Enhanced with Schedule button + all existing features preserved
  */
 
 import 'package:flutter/material.dart';
@@ -53,30 +48,15 @@ class _DashboardScreenState extends State<DashboardScreen>
     _fadeAnim = CurvedAnimation(
         parent: _animController, curve: Curves.easeOut);
 
-    // FIX 1 — Defer ALL side effects to postFrameCallback.
-    // On first login the JWT token is still being persisted to storage
-    // when DashboardScreen mounts. Calling _loadData() synchronously
-    // in initState fires API requests before the token is ready,
-    // which returns 401. If ApiService handles 401 by dispatching
-    // LoggedOut to AuthBloc the user gets kicked back to login.
-    // postFrameCallback fires after the first frame is rendered and
-    // after AuthBloc has fully settled into Authenticated state.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-
-      // FIX 2 — guard: only load data if actually authenticated.
-      // Prevents any API call if somehow dashboard mounts during
-      // an intermediate auth state.
       final state = context.read<AuthBloc>().state;
       if (state is Authenticated) {
         _loadData();
-        // FIX 3 — defer interstitial ad by 3s so it never
-        // interferes with auth state settling or first-paint
         Future.delayed(const Duration(seconds: 3), () {
           if (mounted) _adService.showInterstitialAd();
         });
       } else {
-        // Not authenticated — just stop loading spinner
         if (mounted) setState(() => _isLoading = false);
       }
     });
@@ -89,7 +69,6 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Future<void> _loadData({bool silent = false}) async {
-    // FIX 4 — always check auth before any API call
     if (!mounted) return;
     final authState = context.read<AuthBloc>().state;
     if (authState is! Authenticated) {
@@ -123,10 +102,6 @@ class _DashboardScreenState extends State<DashboardScreen>
       });
       _animController.forward(from: 0);
     } catch (e) {
-      // FIX 5 — silently swallow ALL API errors on the dashboard.
-      // Dashboard data is non-critical. An API failure (including 401)
-      // must NEVER bubble up and affect AuthBloc state.
-      // The user just sees empty stats — they can pull-to-refresh.
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -137,10 +112,8 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Future<void> _refresh() async {
-    // FIX 6 — guard auth on manual refresh too
     final authState = context.read<AuthBloc>().state;
     if (authState is! Authenticated) return;
-
     setState(() => _isRefreshing = true);
     await _loadData(silent: true);
   }
@@ -177,10 +150,6 @@ class _DashboardScreenState extends State<DashboardScreen>
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<AuthBloc, AuthState>(
-      // FIX 7 — only rebuild when auth user data actually changes.
-      // Without buildWhen, every AuthLoading state during ANY auth
-      // operation rebuilds dashboard and briefly sets user = null,
-      // causing a welcome card flicker.
       buildWhen: (previous, current) =>
           current is Authenticated ||
           current is Unauthenticated ||
@@ -193,17 +162,16 @@ class _DashboardScreenState extends State<DashboardScreen>
           appBar: _buildAppBar(user),
           body: Column(
             children: [
-              // ── STATIC — welcome card never scrolls ───────────────
               Container(
                 color: Theme.of(context).scaffoldBackgroundColor,
-                padding: EdgeInsets.fromLTRB(16.w, 12.h, 16.w, 12.h),
+                padding:
+                    EdgeInsets.fromLTRB(16.w, 12.h, 16.w, 12.h),
                 child: _buildWelcomeCard(user),
               ),
-
-              // ── SCROLLABLE — everything below ─────────────────────
               Expanded(
                 child: _isLoading
-                    ? const Center(child: CircularProgressIndicator())
+                    ? const Center(
+                        child: CircularProgressIndicator())
                     : RefreshIndicator(
                         onRefresh: _refresh,
                         color: AppTheme.primaryColor,
@@ -215,32 +183,25 @@ class _DashboardScreenState extends State<DashboardScreen>
                             children: [
                               _buildDailyUsageBar(),
                               SizedBox(height: 20.h),
-
                               _buildSectionTitle('📊 Your Stats'),
                               SizedBox(height: 12.h),
                               _buildStatsGrid(),
                               SizedBox(height: 20.h),
-
-                              // Upgrade banner (free only)
                               if ((user?.subscriptionTier ?? 'free')
                                       .toLowerCase() ==
                                   'free') ...[
                                 _buildUpgradeBanner(),
                                 SizedBox(height: 20.h),
                               ],
-
                               RewardAdButton(
                                   onRewardEarned: _onCreditsEarned),
                               SizedBox(height: 20.h),
-
                               _buildSectionTitle('⚡ Quick Actions'),
                               SizedBox(height: 12.h),
                               _buildQuickActions(),
                               SizedBox(height: 20.h),
-
                               const BannerAdContainer(),
                               SizedBox(height: 20.h),
-
                               _buildRecentVideos(),
                             ],
                           ),
@@ -265,13 +226,9 @@ class _DashboardScreenState extends State<DashboardScreen>
           Icon(Icons.auto_awesome,
               size: 22.w, color: AppTheme.primaryColor),
           SizedBox(width: 8.w),
-          Text(
-            'chAs AI Creator',
-            style: TextStyle(
-              fontSize: 18.sp,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
+          Text('chAs AI Creator',
+              style: TextStyle(
+                  fontSize: 18.sp, fontWeight: FontWeight.bold)),
         ],
       ),
       actions: [
@@ -293,20 +250,18 @@ class _DashboardScreenState extends State<DashboardScreen>
               children: [
                 Text('💰', style: TextStyle(fontSize: 14.sp)),
                 SizedBox(width: 4.w),
-                Text(
-                  '$_credits',
-                  style: TextStyle(
-                    fontSize: 13.sp,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.warningColor,
-                  ),
-                ),
+                Text('$_credits',
+                    style: TextStyle(
+                      fontSize: 13.sp,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.warningColor,
+                    )),
               ],
             ),
           ),
         ),
 
-        // Notification bell with badge
+        // Notification bell
         Stack(
           clipBehavior: Clip.none,
           children: [
@@ -322,31 +277,26 @@ class _DashboardScreenState extends State<DashboardScreen>
                   width: 16.w,
                   height: 16.w,
                   decoration: const BoxDecoration(
-                    color: Colors.red,
-                    shape: BoxShape.circle,
-                  ),
+                      color: Colors.red, shape: BoxShape.circle),
                   child: Center(
-                    child: Text(
-                      '$_notificationCount',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 9.sp,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    child: Text('$_notificationCount',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 9.sp,
+                          fontWeight: FontWeight.bold,
+                        )),
                   ),
                 ),
               ),
           ],
         ),
-
         SizedBox(width: 4.w),
       ],
     );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // WELCOME CARD — static, never scrolls
+  // WELCOME CARD
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildWelcomeCard(User? user) {
@@ -373,7 +323,6 @@ class _DashboardScreenState extends State<DashboardScreen>
       ),
       child: Row(
         children: [
-          // Avatar
           Container(
             width: 60.w,
             height: 60.w,
@@ -384,28 +333,20 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
             child: user?.avatarUrl != null
                 ? ClipOval(
-                    child: Image.network(
-                      user!.avatarUrl!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) =>
-                          _avatarText(initial),
-                    ),
-                  )
+                    child: Image.network(user!.avatarUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            _avatarText(initial)))
                 : _avatarText(initial),
           ),
-
           SizedBox(width: 16.w),
-
-          // Info
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Welcome back! 👋',
-                  style: TextStyle(
-                      fontSize: 13.sp, color: Colors.white70),
-                ),
+                Text('Welcome back! 👋',
+                    style: TextStyle(
+                        fontSize: 13.sp, color: Colors.white70)),
                 SizedBox(height: 3.h),
                 Text(
                   name,
@@ -436,31 +377,26 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Widget _avatarText(String initial) => Center(
-        child: Text(
-          initial,
-          style: TextStyle(
-            fontSize: 24.sp,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
-        ),
+        child: Text(initial,
+            style: TextStyle(
+                fontSize: 24.sp,
+                fontWeight: FontWeight.bold,
+                color: Colors.white)),
       );
 
   Widget _welchipBadge(String label) => Container(
-        padding: EdgeInsets.symmetric(
-            horizontal: 10.w, vertical: 5.h),
+        padding:
+            EdgeInsets.symmetric(horizontal: 10.w, vertical: 5.h),
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.2),
           borderRadius: BorderRadius.circular(20.r),
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 11.sp,
-            color: Colors.white,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+        child: Text(label,
+            style: TextStyle(
+              fontSize: 11.sp,
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+            )),
       );
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -488,16 +424,13 @@ class _DashboardScreenState extends State<DashboardScreen>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                '📅 Daily Usage',
-                style: TextStyle(
-                    fontSize: 13.sp, fontWeight: FontWeight.w600),
-              ),
-              Text(
-                '$used / $total videos',
-                style:
-                    TextStyle(fontSize: 12.sp, color: Colors.grey),
-              ),
+              Text('📅 Daily Usage',
+                  style: TextStyle(
+                      fontSize: 13.sp,
+                      fontWeight: FontWeight.w600)),
+              Text('$used / $total videos',
+                  style: TextStyle(
+                      fontSize: 12.sp, color: Colors.grey)),
             ],
           ),
           SizedBox(height: 10.h),
@@ -591,25 +524,21 @@ class _DashboardScreenState extends State<DashboardScreen>
               color: item.color.withOpacity(0.15),
               borderRadius: BorderRadius.circular(10.r),
             ),
-            child:
-                Text(item.emoji, style: TextStyle(fontSize: 16.sp)),
+            child: Text(item.emoji,
+                style: TextStyle(fontSize: 16.sp)),
           ),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                item.value,
-                style: TextStyle(
-                  fontSize: 26.sp,
-                  fontWeight: FontWeight.bold,
-                  color: item.color,
-                ),
-              ),
-              Text(
-                item.label,
-                style:
-                    TextStyle(fontSize: 11.sp, color: Colors.grey),
-              ),
+              Text(item.value,
+                  style: TextStyle(
+                    fontSize: 26.sp,
+                    fontWeight: FontWeight.bold,
+                    color: item.color,
+                  )),
+              Text(item.label,
+                  style: TextStyle(
+                      fontSize: 11.sp, color: Colors.grey)),
             ],
           ),
         ],
@@ -628,11 +557,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         padding: EdgeInsets.all(16.w),
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [
-              Colors.amber.shade700,
-              Colors.orange.shade600,
-            ],
-          ),
+              colors: [Colors.amber.shade700, Colors.orange.shade600]),
           borderRadius: BorderRadius.circular(16.r),
         ),
         child: Row(
@@ -643,21 +568,17 @@ class _DashboardScreenState extends State<DashboardScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'Upgrade to Pro',
-                    style: TextStyle(
-                      fontSize: 15.sp,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                  Text(
-                    '50 videos/day · 5 min max · 4K quality',
-                    style: TextStyle(
-                      fontSize: 11.sp,
-                      color: Colors.white.withOpacity(0.8),
-                    ),
-                  ),
+                  Text('Upgrade to Pro',
+                      style: TextStyle(
+                        fontSize: 15.sp,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      )),
+                  Text('50 videos/day · 5 min max · 4K quality',
+                      style: TextStyle(
+                        fontSize: 11.sp,
+                        color: Colors.white.withOpacity(0.8),
+                      )),
                 ],
               ),
             ),
@@ -668,14 +589,12 @@ class _DashboardScreenState extends State<DashboardScreen>
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(20.r),
               ),
-              child: Text(
-                'Upgrade',
-                style: TextStyle(
-                  fontSize: 12.sp,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.orange.shade700,
-                ),
-              ),
+              child: Text('Upgrade',
+                  style: TextStyle(
+                    fontSize: 12.sp,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.orange.shade700,
+                  )),
             ),
           ],
         ),
@@ -684,7 +603,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // QUICK ACTIONS
+  // QUICK ACTIONS — added Schedule button
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildQuickActions() {
@@ -700,10 +619,10 @@ class _DashboardScreenState extends State<DashboardScreen>
           color: Colors.green,
           onTap: () => _navigateTo(1)),
       _QuickAction(
-          emoji: '⚙️',
-          label: 'Settings',
-          color: Colors.blueGrey,
-          onTap: () => _navigateTo(3)),
+          emoji: '📅',
+          label: 'Schedule',
+          color: Colors.blue,
+          onTap: _showScheduleOverview),
       _QuickAction(
           emoji: '⭐',
           label: 'Upgrade',
@@ -726,8 +645,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                 decoration: BoxDecoration(
                   color: a.color.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(16.r),
-                  border: Border.all(
-                      color: a.color.withOpacity(0.2)),
+                  border:
+                      Border.all(color: a.color.withOpacity(0.2)),
                 ),
                 child: Column(
                   children: [
@@ -767,12 +686,10 @@ class _DashboardScreenState extends State<DashboardScreen>
             _buildSectionTitle('🎬 Recent Videos'),
             TextButton(
               onPressed: () => _navigateTo(1),
-              child: Text(
-                'See All →',
-                style: TextStyle(
-                    fontSize: 13.sp,
-                    color: AppTheme.primaryColor),
-              ),
+              child: Text('See All →',
+                  style: TextStyle(
+                      fontSize: 13.sp,
+                      color: AppTheme.primaryColor)),
             ),
           ],
         ),
@@ -795,8 +712,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     final duration = video['duration'] as int? ?? 0;
     final createdAt = video['created_at'] as String?;
     final niche = video['niche'] as String? ?? '';
-    final progress =
-        (video['progress'] as num?)?.toDouble() ?? 0.0;
+    final progress = (video['progress'] as num?)?.toDouble() ?? 0.0;
 
     return GestureDetector(
       onTap: () => _navigateTo(1),
@@ -811,7 +727,6 @@ class _DashboardScreenState extends State<DashboardScreen>
         ),
         child: Row(
           children: [
-            // Thumbnail
             ClipRRect(
               borderRadius: BorderRadius.circular(12.r),
               child: SizedBox(
@@ -857,49 +772,39 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ),
               ),
             ),
-
             SizedBox(width: 12.w),
-
-            // Info
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 13.sp,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                  Text(title,
+                      style: TextStyle(
+                        fontSize: 13.sp,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis),
                   SizedBox(height: 6.h),
                   Row(
                     children: [
                       _statusChip(status),
                       SizedBox(width: 6.w),
                       if (duration > 0)
-                        Text(
-                          _formatDuration(duration),
-                          style: TextStyle(
-                              fontSize: 10.sp,
-                              color: Colors.grey),
-                        ),
+                        Text(_formatDuration(duration),
+                            style: TextStyle(
+                                fontSize: 10.sp,
+                                color: Colors.grey)),
                     ],
                   ),
                   if (createdAt != null) ...[
                     SizedBox(height: 4.h),
-                    Text(
-                      _formatDate(createdAt),
-                      style: TextStyle(
-                          fontSize: 10.sp, color: Colors.grey),
-                    ),
+                    Text(_formatDate(createdAt),
+                        style: TextStyle(
+                            fontSize: 10.sp, color: Colors.grey)),
                   ],
                 ],
               ),
             ),
-
             Icon(Icons.chevron_right,
                 color: Colors.grey, size: 18.w),
           ],
@@ -926,8 +831,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   Widget _statusChip(String status) {
     final color = _statusColor(status);
     return Container(
-      padding:
-          EdgeInsets.symmetric(horizontal: 7.w, vertical: 3.h),
+      padding: EdgeInsets.symmetric(horizontal: 7.w, vertical: 3.h),
       decoration: BoxDecoration(
         color: color.withOpacity(0.12),
         borderRadius: BorderRadius.circular(6.r),
@@ -956,17 +860,14 @@ class _DashboardScreenState extends State<DashboardScreen>
         children: [
           Text('🎬', style: TextStyle(fontSize: 48.sp)),
           SizedBox(height: 12.h),
-          Text(
-            'No videos yet',
-            style: TextStyle(
-                fontSize: 16.sp, fontWeight: FontWeight.bold),
-          ),
+          Text('No videos yet',
+              style: TextStyle(
+                  fontSize: 16.sp, fontWeight: FontWeight.bold)),
           SizedBox(height: 6.h),
           Text(
             'Tap Create to generate your first AI video!',
             textAlign: TextAlign.center,
-            style:
-                TextStyle(fontSize: 12.sp, color: Colors.grey),
+            style: TextStyle(fontSize: 12.sp, color: Colors.grey),
           ),
           SizedBox(height: 16.h),
           ElevatedButton.icon(
@@ -981,6 +882,198 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SCHEDULE OVERVIEW (from dashboard)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  void _showScheduleOverview() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => Container(
+        height: MediaQuery.of(context).size.height * 0.6,
+        decoration: BoxDecoration(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          borderRadius:
+              BorderRadius.vertical(top: Radius.circular(24.r)),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 36.w,
+              height: 4.h,
+              margin: EdgeInsets.only(top: 12.h, bottom: 8.h),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade400,
+                borderRadius: BorderRadius.circular(2.r),
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.all(20.w),
+              child: Row(
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(10.w),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12.r),
+                    ),
+                    child: Icon(Icons.schedule_rounded,
+                        color: Colors.blue, size: 22.w),
+                  ),
+                  SizedBox(width: 12.w),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Video Schedules',
+                          style: TextStyle(
+                              fontSize: 17.sp,
+                              fontWeight: FontWeight.bold)),
+                      Text('Auto-generate videos daily',
+                          style: TextStyle(
+                              fontSize: 11.sp, color: Colors.grey)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Divider(
+                height: 1, color: Colors.grey.withOpacity(0.1)),
+            Expanded(
+              child: FutureBuilder<Map<String, dynamic>>(
+                future: _apiService.getSchedules(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState ==
+                      ConnectionState.waiting) {
+                    return const Center(
+                        child: CircularProgressIndicator());
+                  }
+                  final schedules =
+                      (snapshot.data?['schedules'] ?? []) as List;
+
+                  if (schedules.isEmpty) {
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text('📅',
+                              style: TextStyle(fontSize: 48.sp)),
+                          SizedBox(height: 12.h),
+                          Text('No schedules yet',
+                              style: TextStyle(
+                                  fontSize: 16.sp,
+                                  fontWeight: FontWeight.bold)),
+                          SizedBox(height: 8.h),
+                          Text(
+                            'Go to My Videos to create a schedule',
+                            style: TextStyle(
+                                fontSize: 12.sp,
+                                color: Colors.grey),
+                          ),
+                          SizedBox(height: 20.h),
+                          ElevatedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _navigateTo(1);
+                            },
+                            icon: const Icon(Icons.add, size: 16),
+                            label: const Text('Create Schedule'),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+
+                  return ListView.builder(
+                    padding: EdgeInsets.all(16.w),
+                    itemCount: schedules.length,
+                    itemBuilder: (_, i) {
+                      final s = schedules[i];
+                      final isActive =
+                          s['is_active'] as bool? ?? false;
+                      final name =
+                          s['name'] as String? ?? 'Schedule';
+                      final generated =
+                          s['total_videos_generated'] as int? ?? 0;
+                      return Container(
+                        margin: EdgeInsets.only(bottom: 10.h),
+                        padding: EdgeInsets.all(14.w),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).cardColor,
+                          borderRadius:
+                              BorderRadius.circular(14.r),
+                          border: Border.all(
+                            color: isActive
+                                ? Colors.green.withOpacity(0.3)
+                                : Colors.grey.withOpacity(0.15),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              isActive
+                                  ? Icons.play_circle_rounded
+                                  : Icons.pause_circle_rounded,
+                              color: isActive
+                                  ? Colors.green
+                                  : Colors.grey,
+                              size: 28.w,
+                            ),
+                            SizedBox(width: 12.w),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  Text(name,
+                                      style: TextStyle(
+                                          fontSize: 14.sp,
+                                          fontWeight:
+                                              FontWeight.w600)),
+                                  Text(
+                                      '$generated videos generated',
+                                      style: TextStyle(
+                                          fontSize: 11.sp,
+                                          color: Colors.grey)),
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: EdgeInsets.symmetric(
+                                  horizontal: 10.w, vertical: 5.h),
+                              decoration: BoxDecoration(
+                                color: isActive
+                                    ? Colors.green.withOpacity(0.1)
+                                    : Colors.grey.withOpacity(0.1),
+                                borderRadius:
+                                    BorderRadius.circular(8.r),
+                              ),
+                              child: Text(
+                                isActive ? 'Active' : 'Paused',
+                                style: TextStyle(
+                                  fontSize: 11.sp,
+                                  color: isActive
+                                      ? Colors.green
+                                      : Colors.grey,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1020,14 +1113,12 @@ class _DashboardScreenState extends State<DashboardScreen>
                     .titleLarge
                     ?.copyWith(fontWeight: FontWeight.bold)),
             SizedBox(height: 16.h),
-            Text(
-              '$_credits',
-              style: TextStyle(
-                fontSize: 56.sp,
-                fontWeight: FontWeight.bold,
-                color: AppTheme.warningColor,
-              ),
-            ),
+            Text('$_credits',
+                style: TextStyle(
+                  fontSize: 56.sp,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.warningColor,
+                )),
             Text('credits available',
                 style: TextStyle(
                     fontSize: 13.sp, color: Colors.grey)),
@@ -1186,27 +1277,20 @@ class _DashboardScreenState extends State<DashboardScreen>
                     ?.copyWith(fontWeight: FontWeight.bold)),
             SizedBox(height: 16.h),
             ...[
-              (
-                '🆓 Free',
-                ['2 videos/day', '30s max', 'Watermark'],
-                false
-              ),
-              (
-                '🔵 Basic',
-                ['10 videos/day', '60s max', 'HD', 'No watermark'],
-                false
-              ),
-              (
-                '⭐ Pro',
-                [
-                  '50 videos/day',
-                  '5 min max',
-                  '4K',
-                  'Priority',
-                  'All AI features'
-                ],
-                true
-              ),
+              ('🆓 Free', ['2 videos/day', '30s max', 'Watermark'],
+                  false),
+              ('🔵 Basic',
+                  ['10 videos/day', '60s max', 'HD', 'No watermark'],
+                  false),
+              ('⭐ Pro',
+                  [
+                    '50 videos/day',
+                    '5 min max',
+                    '4K',
+                    'Priority',
+                    'All AI features'
+                  ],
+                  true),
             ].map(
               (plan) => Container(
                 margin: EdgeInsets.only(bottom: 10.h),
@@ -1288,53 +1372,48 @@ class _DashboardScreenState extends State<DashboardScreen>
   // HELPERS
   // ─────────────────────────────────────────────────────────────────────────
 
-  Widget _buildSectionTitle(String title) => Text(
-        title,
-        style: TextStyle(
-            fontSize: 17.sp, fontWeight: FontWeight.bold),
-      );
+  Widget _buildSectionTitle(String title) => Text(title,
+      style: TextStyle(
+          fontSize: 17.sp, fontWeight: FontWeight.bold));
 
   Color _statusColor(String status) => switch (status) {
-        'completed'  => Colors.green,
+        'completed' => Colors.green,
         'processing' => Colors.orange,
-        'pending'    => Colors.blue,
-        'failed'     => Colors.red,
-        _            => Colors.grey,
+        'pending' => Colors.blue,
+        'failed' => Colors.red,
+        _ => Colors.grey,
       };
 
   String _statusLabel(String status) => switch (status) {
-        'completed'  => '✅ Done',
+        'completed' => '✅ Done',
         'processing' => '⏳ Processing',
-        'pending'    => '🔵 Pending',
-        'failed'     => '❌ Failed',
-        _            => status,
+        'pending' => '🔵 Pending',
+        'failed' => '❌ Failed',
+        _ => status,
       };
 
-  String _nicheEmoji(String niche) =>
-      switch (niche.toLowerCase()) {
-        'fitness'    => '💪',
-        'cooking'    => '🍳',
-        'tech'       => '💻',
-        'travel'     => '✈️',
-        'animals'    => '🐾',
-        'fashion'    => '👗',
-        'finance'    => '💰',
-        'education'  => '📚',
+  String _nicheEmoji(String niche) => switch (niche.toLowerCase()) {
+        'fitness' => '💪',
+        'cooking' => '🍳',
+        'tech' => '💻',
+        'travel' => '✈️',
+        'animals' => '🐾',
+        'fashion' => '👗',
+        'finance' => '💰',
+        'education' => '📚',
         'motivation' => '🚀',
-        'gaming'     => '🎮',
-        'music'      => '🎵',
-        'comedy'     => '😂',
-        'nature'     => '🌿',
-        'business'   => '💼',
-        _            => '🎬',
+        'gaming' => '🎮',
+        'music' => '🎵',
+        'comedy' => '😂',
+        'nature' => '🌿',
+        'business' => '💼',
+        _ => '🎬',
       };
 
   String _formatDuration(int seconds) {
     final m = seconds ~/ 60;
     final s = seconds % 60;
-    return m > 0
-        ? '$m:${s.toString().padLeft(2, '0')}'
-        : '${s}s';
+    return m > 0 ? '$m:${s.toString().padLeft(2, '0')}' : '${s}s';
   }
 
   String _formatDate(String iso) {
@@ -1351,21 +1430,16 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// DATA CLASSES
-// ─────────────────────────────────────────────────────────────────────────
-
 class _StatItem {
   final String emoji;
   final String label;
   final String value;
   final Color color;
-  const _StatItem({
-    required this.emoji,
-    required this.label,
-    required this.value,
-    required this.color,
-  });
+  const _StatItem(
+      {required this.emoji,
+      required this.label,
+      required this.value,
+      required this.color});
 }
 
 class _QuickAction {
@@ -1373,10 +1447,9 @@ class _QuickAction {
   final String label;
   final Color color;
   final VoidCallback onTap;
-  const _QuickAction({
-    required this.emoji,
-    required this.label,
-    required this.color,
-    required this.onTap,
-  });
+  const _QuickAction(
+      {required this.emoji,
+      required this.label,
+      required this.color,
+      required this.onTap});
 }
