@@ -77,17 +77,17 @@ class CreateVideoRequest(BaseModel):
 
 
 class SmartGenerateRequest(BaseModel):
-    idea:                    str
-    aspect_ratio:            str            = "9:16"
-    duration:                int            = Field(default=30, ge=10, le=300)
-    style:                   str            = "cinematic"
-    audio_mode:              str            = "narration"
-    voice_style:             str            = "professional"
-    target_platforms:        List[str]      = Field(default_factory=lambda: ["tiktok"])
-    captions_enabled:        bool           = True
-    background_music_enabled:bool           = True
-    character_consistency:   bool           = False
-    reference_images:        Optional[List[str]] = None
+    idea:                     str
+    aspect_ratio:             str       = "9:16"
+    duration:                 int       = Field(default=30, ge=10, le=300)
+    style:                    str       = "cinematic"
+    audio_mode:               str       = "narration"
+    voice_style:              str       = "professional"
+    target_platforms:         List[str] = Field(default_factory=lambda: ["tiktok"])
+    captions_enabled:         bool      = True
+    background_music_enabled: bool      = True
+    character_consistency:    bool      = False
+    reference_images:         Optional[List[str]] = None
 
 
 class VideoResponse(BaseModel):
@@ -228,7 +228,6 @@ VALID_RATIOS      = ["16:9", "9:16", "1:1"]
 VALID_STYLES      = ["cartoon", "cinematic", "realistic", "funny", "dramatic", "minimal"]
 VALID_AUDIO_MODES = ["silent", "narration", "sound_sync"]
 
-# All statuses the frontend can filter by
 PROCESSING_STATUSES = [
     VideoStatus.PENDING,
     VideoStatus.SCRIPT_GENERATING,
@@ -242,10 +241,6 @@ PROCESSING_STATUSES = [
 # ── Background task wrapper ───────────────────────────────────────────────────
 
 async def _run_generation(video_id: str, db_factory):
-    """
-    FIX: generate_video_task never raises — it returns a dict.
-    Check the result dict instead of using try/except.
-    """
     result = await generate_video_task(video_id)
     if result.get("status") == "error":
         logger.error(
@@ -371,10 +366,10 @@ async def smart_generate(
             "Resets at midnight UTC."
         )
 
-    # FIX: Import from script_generation, not text_generation
+    # FIX: Use text_generation.py (the actual file on server)
     try:
-        from app.services.ai.script_generation import ScriptGenerationService, AIGenerationError
-        text_svc = ScriptGenerationService()
+        from app.services.ai.text_generation import TextGenerationService, AIGenerationError
+        text_svc = TextGenerationService()
     except ImportError as e:
         raise ValidationException(f"AI service unavailable: {e}")
 
@@ -576,7 +571,6 @@ async def _list_videos(
     query = db.query(Video).filter(Video.user_id == current_user.id)
 
     if status:
-        # FIX: "processing" maps to all in-progress statuses via IN query
         if status == "processing":
             query = query.filter(Video.status.in_(PROCESSING_STATUSES))
         elif status == "completed":
